@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import copy
 import logging
 import zipfile
 import collections
@@ -8,6 +9,28 @@ import lxml.etree
 
 class InvalidFileFormatException(RuntimeError):
 	pass
+
+
+class Color:
+	''' And RGB color '''
+
+	def __init__(self, str):
+		''' Init from string representation #ffffff '''
+		assert len(str) == 7
+		assert str[0] == '#'
+
+		self.r = int(str[1:3], 16)
+		self.g = int(str[3:5], 16)
+		self.b = int(str[5:7], 16)
+
+	def add(self, val):
+		''' Add value to all r/g/b vals '''
+		self.r = max(min(self.r + val, 255), 0)
+		self.g = max(min(self.g + val, 255), 0)
+		self.b = max(min(self.b + val, 255), 0)
+
+	def __str__(self):
+		return '#{:02X}{:02X}{:02X}'.format(self.r, self.g, self.b)
 
 
 class BaseObjFromEl:
@@ -135,14 +158,24 @@ class Diagram(BaseObjFromEl):
 			if figure.type == Figure.TABLE_TYPE and figure['table'] == table.id:
 				return figure
 
-		raise NameError()
+		raise KeyError()
 
 	def getFigureLayer(self, figure):
 		for layer in self.layers:
 			if layer.id == figure['layer']:
 				return layer
 
-		raise NameError()
+		raise KeyError()
+
+	def getFirstTableFigureForLayer(self, layer):
+		for figure in self.figures:
+			if figure.type != Figure.TABLE_TYPE:
+				continue
+
+			if self.getFigureLayer(figure) == layer:
+				return figure
+
+		raise KeyError()
 
 
 
@@ -177,6 +210,70 @@ class Main:
 		})
 		root.append(schema)
 
+		for layer in diagram.layers:
+			firstTable = diagram.getFirstTableFigureForLayer(layer)
+			color = Color(firstTable['color'])
+			bcolor = copy.copy(color)
+			bcolor.add(-40)
+
+			# Create text box
+			tnode = lxml.etree.Element('textbox', {
+				'name': layer['name'],
+				'layer': '0',
+				'font-size': "9",
+			})
+			root.append(tnode)
+
+			pnode = lxml.etree.Element('position', {
+				'x': str(layer['left']),
+				'y': str(layer['top']),
+			})
+			tnode.append(pnode)
+
+			cnode = lxml.etree.Element('comment')
+			cnode.text = layer['name']
+			tnode.append(cnode)
+
+			# Create tag
+			tnode = lxml.etree.Element('tag', {
+				'name': layer['name'].lower(),
+			})
+			root.append(tnode)
+
+			node = lxml.etree.Element('style', {
+				'id': 'table-body',
+				'colors': '#fcfcfc,#fcfcfc,#808080',
+			})
+			tnode.append(node)
+
+			node = lxml.etree.Element('style', {
+				'id': 'table-ext-body',
+				'colors': '#fcfcfc,#fcfcfc,#808080',
+			})
+			tnode.append(node)
+
+			node = lxml.etree.Element('style', {
+				'id': 'table-name',
+				'colors': '#000000',
+			})
+			tnode.append(node)
+
+			node = lxml.etree.Element('style', {
+				'id': 'table-schema-name',
+				'colors': '#000000',
+			})
+			tnode.append(node)
+
+			node = lxml.etree.Element('style', {
+				'id': 'table-title',
+				'colors': "{},{},{}".format(color, color, bcolor),
+			})
+			tnode.append(node)
+
+			node = lxml.etree.Element('comment')
+			node.text = layer['name']
+			tnode.append(node)
+
 		for table in tables:
 			figure = diagram.getTableFigure(table)
 			layer = diagram.getFigureLayer(figure)
@@ -198,6 +295,11 @@ class Main:
 				'name': 'postgres',
 			})
 			tnode.append(rnode)
+
+			node = lxml.etree.Element('tag', {
+				'name': layer['name'].lower(),
+			})
+			tnode.append(node)
 
 			pnode = lxml.etree.Element('position', {
 				'x': str(figure['left'] + layer['left']),
@@ -222,24 +324,6 @@ class Main:
 					commentnode = lxml.etree.Element('comment')
 					commentnode.text = col['comment']
 					colnode.append(commentnode)
-
-		for layer in diagram.layers:
-			tnode = lxml.etree.Element('textbox', {
-				'name': layer['name'],
-				'layer': '0',
-				'font-size': "9",
-			})
-			root.append(tnode)
-
-			pnode = lxml.etree.Element('position', {
-				'x': str(layer['left']),
-				'y': str(layer['top']),
-			})
-			tnode.append(pnode)
-
-			cnode = lxml.etree.Element('comment')
-			cnode.text = layer['name']
-			tnode.append(cnode)
 
 		return tree
 
