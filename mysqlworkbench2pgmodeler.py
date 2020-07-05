@@ -10,13 +10,15 @@ class InvalidFileFormatException(RuntimeError):
 	pass
 
 
-class Table:
+class BaseObjFromEl:
 
 	def __init__(self, el):
+		self.id = el.get('id')
+
 		self.attrs = collections.OrderedDict()
 
 		for child in el:
-			if child.tag != 'value':
+			if child.tag not in {'value', 'link'}:
 				continue
 			if 'key' not in child.keys():
 				continue
@@ -35,22 +37,113 @@ class Table:
 				pass
 			elif type == 'int':
 				value = int(value)
+			elif type == 'real':
+				value = float(value)
 			elif type == 'list':
 				#TODO
 				value = []
 			elif type == 'dict':
 				#TODO
 				value = {}
+			elif type == 'object':
+				# Should be the ID of the linked object
+				pass
 			else:
-				raise NotImplementedError("Unknown type " + type)
+				raise NotImplementedError('Unknown type "{}": "{}"'.format(type, value))
 
 			self.attrs[key] = value
+
+	def __contains__(self, key):
+		return key in self.attrs
 
 	def __getitem__(self, key):
 		return self.attrs[key]
 
+	def __setitem__(self, key, val):
+		self.attrs[key] = val
+
+	def __len__(self):
+		return len(self.attrs)
+
 	def __repr__(self):
-		return '<Table {}>'.format(", ".join(["{}: {}".format(k,v) for k, v in self.attrs.items()]))
+		return '<{} {}>'.format(
+			self.__class__.__name__,
+			", ".join(["{}: {}".format(k,v) for k, v in self.attrs.items()])
+		)
+
+
+class Column(BaseObjFromEl):
+	def __init__(self, el):
+		super().__init__(el)
+
+		flags = el.find("./value[@key='flags']")
+
+		self['flags'] = []
+		for flag in flags:
+			self['flags'].append(flag.text)
+
+
+class Table(BaseObjFromEl):
+	def __init__(self, el):
+		super().__init__(el)
+
+		columns = el.find("./value[@key='columns']")
+		assert len(columns), list(el)
+
+		self.columns = []
+		for column in columns:
+			self.columns.append(Column(column))
+
+
+class Figure(BaseObjFromEl):
+
+	TABLE_TYPE = 'workbench.physical.TableFigure'
+
+	def __init__(self, el):
+		super().__init__(el)
+
+		self.type = el.get('struct-name')
+
+
+class Layer(BaseObjFromEl):
+	pass
+
+
+class Diagram(BaseObjFromEl):
+	def __init__(self, el):
+		super().__init__(el)
+
+		connections = el.find("./value[@key='connections']")
+		assert connections is not None, list(el)
+
+		figures = el.find("./value[@key='figures']")
+		assert figures is not None, list(el)
+
+		layers = el.find("./value[@key='layers']")
+		assert layers is not None, list(el)
+
+		self.figures = []
+		for figure in figures:
+			self.figures.append(Figure(figure))
+
+		self.layers = []
+		for layer in layers:
+			self.layers.append(Layer(layer))
+
+	def getTableFigure(self, table):
+		for figure in self.figures:
+			if figure.type == Figure.TABLE_TYPE and figure['table'] == table.id:
+				return figure
+
+		raise NameError()
+
+	def getFigureLayer(self, figure):
+		for layer in self.layers:
+			if layer.id == figure['layer']:
+				return layer
+
+		raise NameError()
+
 
 
 class Main:
@@ -61,7 +154,7 @@ class Main:
 	def __init__(self):
 		self.log = logging.getLogger('main')
 
-	def createDbm(self, dbname, tables=[]):
+	def createDbm(self, dbname, tables, diagram):
 		''' Creates a new empty DBM '''
 		tree = lxml.etree.ElementTree(lxml.etree.XML('''
 			<dbmodel pgmodeler-ver="0.9.2" last-position="0,0" last-zoom="1" max-obj-count="4" default-schema="public" default-owner="postgres">
@@ -85,6 +178,9 @@ class Main:
 		root.append(schema)
 
 		for table in tables:
+			figure = diagram.getTableFigure(table)
+			layer = diagram.getFigureLayer(figure)
+
 			tnode = lxml.etree.Element('table', {
 				'name': table['name'],
 				'layer': '0',
@@ -104,10 +200,46 @@ class Main:
 			tnode.append(rnode)
 
 			pnode = lxml.etree.Element('position', {
-				'x': '10',
-				'y': '10',
+				'x': str(figure['left'] + layer['left']),
+				'y': str(figure['top'] + layer['top']),
 			})
 			tnode.append(pnode)
+
+			for col in table.columns:
+				colnode = lxml.etree.Element('column', {
+					'name': col['name'],
+				})
+				tnode.append(colnode)
+
+				#TODO
+				typenode = lxml.etree.Element('type', {
+					'name': 'smallint',
+					'length': '0',
+				})
+				colnode.append(typenode)
+
+				if 'comment' in col:
+					commentnode = lxml.etree.Element('comment')
+					commentnode.text = col['comment']
+					colnode.append(commentnode)
+
+		for layer in diagram.layers:
+			tnode = lxml.etree.Element('textbox', {
+				'name': layer['name'],
+				'layer': '0',
+				'font-size': "9",
+			})
+			root.append(tnode)
+
+			pnode = lxml.etree.Element('position', {
+				'x': str(layer['left']),
+				'y': str(layer['top']),
+			})
+			tnode.append(pnode)
+
+			cnode = lxml.etree.Element('comment')
+			cnode.text = layer['name']
+			tnode.append(cnode)
 
 		return tree
 
@@ -133,7 +265,7 @@ class Main:
 		if root.get('document_type') != 'MySQL Workbench Model':
 			raise InvalidFileFormatException(str(root.attrib))
 
-		#for f in root.findall(".//value[.='search']"):
+		#for f in root.findall(".//value[.='Prodotti']"):
 		#	print(tree.getelementpath(f))
 		#raise RuntimeError()
 
@@ -180,22 +312,32 @@ class Main:
 		#link {'type': 'object', 'struct-name': 'GrtObject', 'key': 'owner'}
 
 		catalog = model.find("./value[@key='catalog']")
-		assert catalog, list(model)
+		assert catalog is not None, list(model)
 
 		schema = catalog.find("./value[@key='schemata']/value[@struct-name='db.mysql.Schema']")
-		assert schema, list(catalog)
+		assert schema is not None, list(catalog)
 
 		schemaNameTag = schema.find("./value[@key='name']")
 		schemaName = schemaNameTag.text
 
 		tables = schema.find("./value[@key='tables']")
-		assert tables, list(schema)
+		assert len(tables), list(schema)
 
 		convTables = []
 		for table in tables:
 			convTables.append(Table(table))
 
-		return self.createDbm(schemaName, convTables)
+		diagrams = model.find("./value[@key='diagrams']")
+		assert len(diagrams), list(schema)
+
+		convDiagrams = []
+		for diagram in diagrams:
+			assert diagram.get('struct-name') == 'workbench.physical.Diagram'
+			convDiagrams.append(Diagram(diagram))
+
+		#TODO: multiple diagrams not supported, choose diagram
+		self.log.info('Using diagram "%s"', convDiagrams[0]['name'])
+		return self.createDbm(schemaName, convTables, convDiagrams[0])
 
 
 if __name__ == '__main__':
