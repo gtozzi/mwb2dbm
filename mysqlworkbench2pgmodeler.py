@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import re
 import copy
 import logging
 import zipfile
@@ -95,8 +96,49 @@ class BaseObjFromEl:
 		)
 
 
-class Column(BaseObjFromEl):
+class DataType:
+
+	TYPE_RE = re.compile('^com.mysql.rdbms.mysql.datatype.([a-z_]+)$')
+
+	def __init__(self, id, type):
+		m = self.TYPE_RE.match(type)
+		assert m, type
+
+		self.id = id
+		self.nativeType = type
+		self.type = m.group(1).upper()
+
+
+
+class SimpleType(DataType):
+
 	def __init__(self, el):
+		assert el.tag == 'link', el.attrib
+
+		super().__init__(el.text, el.text)
+
+	def __repr__(self):
+		return "<SimpleType {}>".format(self.type)
+
+
+class UserType(BaseObjFromEl, DataType):
+
+	def __init__(self, el):
+		assert el.tag == 'value', el.attrib
+
+		BaseObjFromEl.__init__(self, el)
+
+		st = el.find("./link[@key='actualType']")
+		assert st is not None, list(el)
+
+		DataType.__init__(self, el.get('id'), st.text)
+
+
+class Column(BaseObjFromEl):
+
+	TYPE_INT = 'com.mysql.rdbms.mysql.datatype.int'
+
+	def __init__(self, el, types):
 		super().__init__(el)
 
 		flags = el.find("./value[@key='flags']")
@@ -105,9 +147,18 @@ class Column(BaseObjFromEl):
 		for flag in flags:
 			self['flags'].append(flag.text)
 
+		# Every col MUST have a simpleType or an userType
+		userType = el.find("./link[@key='userType']")
+		simpleType = el.find("./link[@key='simpleType']")
+		assert userType is not None or simpleType is not None, el.attrib
+		assert not (userType is not None and simpleType is not None), el.attrib
+
+		typeId = userType.text if userType is not None else simpleType.text
+		self.type = types[typeId]
+
 
 class Table(BaseObjFromEl):
-	def __init__(self, el):
+	def __init__(self, el, types):
 		super().__init__(el)
 
 		columns = el.find("./value[@key='columns']")
@@ -115,7 +166,7 @@ class Table(BaseObjFromEl):
 
 		self.columns = []
 		for column in columns:
-			self.columns.append(Column(column))
+			self.columns.append(Column(column, types))
 
 
 class Figure(BaseObjFromEl):
@@ -187,8 +238,41 @@ class Main:
 	def __init__(self):
 		self.log = logging.getLogger('main')
 
+	def _addDomainNodes(self, parent, name, baseType, constraintName, constraintExpr):
+		domainNode = lxml.etree.Element('domain', {
+			'name': name,
+			'not-null': 'false',
+		})
+		parent.append(domainNode)
+
+		domainNode.append(lxml.etree.Element('schema', {
+			'name': 'public',
+		}))
+
+		domainNode.append(lxml.etree.Element('role', {
+			'name': 'postgres',
+		}))
+
+		domainNode.append(lxml.etree.Element('type', {
+			'name': baseType,
+			'length': '0',
+		}))
+
+		constraintNode = lxml.etree.Element('constraint', {
+			'name': constraintName,
+			'type': 'check',
+		})
+		domainNode.append(constraintNode)
+
+		exprNode = lxml.etree.Element('expression')
+		exprNode.text = constraintExpr
+		constraintNode.append(exprNode)
+
 	def createDbm(self, dbname, tables, diagram):
 		''' Creates a new empty DBM '''
+		enumid = 1
+		domains = set()
+
 		tree = lxml.etree.ElementTree(lxml.etree.XML('''
 			<dbmodel pgmodeler-ver="0.9.2" last-position="0,0" last-zoom="1" max-obj-count="4" default-schema="public" default-owner="postgres">
 			</dbmodel>
@@ -210,6 +294,7 @@ class Main:
 		})
 		root.append(schema)
 
+		# Create layers
 		for layer in diagram.layers:
 			firstTable = diagram.getFirstTableFigureForLayer(layer)
 			color = Color(firstTable['color'])
@@ -274,6 +359,13 @@ class Main:
 			node.text = layer['name']
 			tnode.append(node)
 
+		# Create custom domains for unsigned int types
+		for it in ('smallint', 'integer', 'bigint'):
+			dname = 'u' + it
+			domains.add(dname)
+			self._addDomainNodes(root, dname, it, 'gt0', 'VALUE >= 0')
+
+		# Create tables
 		for table in tables:
 			figure = diagram.getTableFigure(table)
 			layer = diagram.getFigureLayer(figure)
@@ -284,7 +376,6 @@ class Main:
 				'collapse-mode': "2",
 				'max-obj-count': "0",
 			})
-			root.append(tnode)
 
 			snode = lxml.etree.Element('schema', {
 				'name': 'public',
@@ -307,23 +398,192 @@ class Main:
 			})
 			tnode.append(pnode)
 
+			#TODO:
+			tabAI = table['nextAutoInc']
+			tabPK = table['primaryKey']
+
 			for col in table.columns:
 				colnode = lxml.etree.Element('column', {
 					'name': col['name'],
 				})
 				tnode.append(colnode)
 
-				#TODO
-				typenode = lxml.etree.Element('type', {
-					'name': 'smallint',
+				attrs = {
 					'length': '0',
+				}
+
+				#TODO
+				#print(col)
+				#print()
+				ai = True if col['autoIncrement'] else False
+				dv = col['defaultValue']
+				dvn = col['defaultValueIsNull']
+				flags = col['flags']
+				nn = True if col['isNotNull'] else False
+				length = col['length']
+				precision = col['precision']
+				scale = col['scale']
+
+				if col.type.type in ('SMALLINT', 'JSON', 'DECIMAL', 'VARCHAR', 'BIGINT', 'DATE', 'CHAR'):
+					type = col.type.type.lower()
+				elif col.type.type == 'INT':
+					type = 'integer'
+				elif col.type.type == 'TINYINT':
+					if isinstance(col.type, UserType) and col.type['name'] in ('UBOOL', 'BOOLEAN', 'BOOL'):
+						type = 'boolean'
+					else:
+						type = 'smallint'
+				elif col.type.type == 'FLOAT':
+					type = 'real'
+				elif col.type.type == 'DOUBLE':
+					type = 'double precision'
+				elif col.type.type in ('TIMESTAMP', 'DATETIME', 'TIMESTAMP_F', 'DATETIME_F'):
+					type = 'timestamp with time zone'
+					attrs['with-timezone'] = 'true'
+				elif col.type.type == 'TIME':
+					type = 'time with time zone'
+					attrs['with-timezone'] = 'true'
+				elif col.type.type == 'TINYTEXT':
+					type = 'varchar'
+					attrs['length'] = '255'
+				elif col.type.type == 'TEXT':
+					type = 'varchar'
+					attrs['length'] = '65535'
+				elif col.type.type == 'MEDIUMTEXT':
+					type = 'varchar'
+					attrs['length'] = '16777215'
+				elif col.type.type == 'LONGTEXT':
+					type = 'varchar'
+					attrs['length'] = '4294967295'
+				elif col.type.type == 'ENUM':
+					type = 'enum_' + str(enumid)
+					enumid += 1
+
+					# Add an enum type node
+					utypenode = lxml.etree.Element('usertype', {
+						'name': type,
+						'configuration': 'enumeration',
+					})
+					root.append(utypenode)
+
+					utypenode.append(lxml.etree.Element('schema', {
+						'name': 'public',
+					}))
+					utypenode.append(lxml.etree.Element('role', {
+						'name': 'postgres',
+					}))
+					utypenode.append(lxml.etree.Element('enumeration', {
+						#TODO: enum list
+						'values': 'abc,def',
+					}))
+
+					type = 'public.' + type
+				else:
+					self.log.warn('Unknown type %s', col.type.type)
+					type = 'smallint'
+
+				# Apply not-null
+				if nn:
+					colnode.set('not-null', "true")
+
+				# Apply auto-increment
+				if ai:
+					if type in ('smallint', 'integer', 'bigint'):
+						colnode.set('identity-type', "ALWAYS")
+
+				# Apply default value
+				#TODO: ON UPDATE CURRENT TIMESTAMP
+				if dv:
+					assert not dvn
+
+					if dv in ('0', '1', 'TRUE', 'FALSE', 'CURRENT_TIMESTAMP'):
+						pass
+					elif dv.startswith("'") and dv.endswith("'"):
+						pass
+					elif dv == 'CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP':
+						#TODO
+						dv = 'CURRENT_TIMESTAMP'
+					else:
+						self.log.warn('Unknown default value %s', dv)
+					colnode.set('default-value', dv)
+				elif dvn:
+					self.log.warn('Unsupported Null default value %s', dv)
+
+				# Apply length/precision/scale
+				if length > 0:
+					assert precision < 0 and scale < 0, (length,precision,scale)
+					assert attrs['length'] == '0'
+
+					attrs['length'] = str(length)
+				elif precision > 0:
+					assert length < 0, (length,precision,scale)
+
+					if scale < 0:
+						# Since precision is not supported in pgSQL, create a domain for it
+
+						dname = type + str(precision)
+						if 'UNSIGNED' in flags:
+							dname = 'u' + dname
+						if dname not in domains:
+							if 'UNSIGNED' in flags:
+								minVal = 0
+							else:
+								minVal = '-' + '9' * precision
+							maxVal = '9' * precision
+							self._addDomainNodes(root, dname, type, 'range' + str(precision),
+									'VALUE >= {} AND VALUE <= {}'.format(minVal, maxVal))
+							domains.add(dname)
+						type = 'public.' + dname
+						flags.remove('UNSIGNED')
+					else:
+						assert attrs['length'] == '0'
+						attrs['length'] = str(precision)
+						attrs['precision'] = str(scale)
+
+				elif scale > 0:
+					assert False, (length,precision,scale)
+
+				# Apply flags
+				if flags:
+					for flag in flags:
+						if flag == 'UNSIGNED':
+							if type in ('smallint', 'integer', 'bigint'):
+								if ai:
+									self.log.info('Unsupported domain in indentity column "%s.%s"',
+											table['name'], col['name'])
+								else:
+									# Unsigned is not supported in PGSQL, so use a special domain
+									type = 'public.u' + type
+							else:
+								self.log.error('Unsupported unsigned flag on %s field', type)
+						else:
+							self.log.warn('Unsupported flag: %s', flag)
+
+				# TODO: integer/text precision
+				# TODO: default
+				# TODO: attribs
+				# TODO: alias
+
+				typenode = lxml.etree.Element('type', {
+					'name': type,
 				})
+				for k, v in attrs.items():
+					typenode.set(k, v)
 				colnode.append(typenode)
 
 				if 'comment' in col:
 					commentnode = lxml.etree.Element('comment')
 					commentnode.text = col['comment']
 					colnode.append(commentnode)
+
+			# Append at the end since enums must go above
+			root.append(tnode)
+
+			#TODO
+			# Append PK
+			#<constraint name="table_pk" type="pk-constr" table="public.new_table">
+			#    <columns names="aaa" ref-type="src-columns"/>
+			#</constraint>
 
 		return tree
 
@@ -349,7 +609,7 @@ class Main:
 		if root.get('document_type') != 'MySQL Workbench Model':
 			raise InvalidFileFormatException(str(root.attrib))
 
-		#for f in root.findall(".//value[.='Prodotti']"):
+		#for f in root.findall(".//value[@id='f1390fb2-1434-11e7-b731-10bf48baca66']"):
 		#	print(tree.getelementpath(f))
 		#raise RuntimeError()
 
@@ -404,12 +664,28 @@ class Main:
 		schemaNameTag = schema.find("./value[@key='name']")
 		schemaName = schemaNameTag.text
 
+		simpleTypesTag = catalog.find("./value[@key='simpleDatatypes']")
+		assert simpleTypesTag is not None, list(catalog)
+
+		userTypesTag = catalog.find("./value[@key='userDatatypes']")
+		assert userTypesTag is not None, list(catalog)
+
+		types = {}
+		for st in simpleTypesTag:
+			t = SimpleType(st)
+			assert t.id not in types
+			types[t.id] = t
+		for ut in userTypesTag:
+			t = UserType(ut)
+			assert t.id not in types
+			types[t.id] = t
+
 		tables = schema.find("./value[@key='tables']")
 		assert len(tables), list(schema)
 
 		convTables = []
 		for table in tables:
-			convTables.append(Table(table))
+			convTables.append(Table(table, types))
 
 		diagrams = model.find("./value[@key='diagrams']")
 		assert len(diagrams), list(schema)
