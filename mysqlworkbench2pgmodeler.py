@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import os
 import re
 import copy
 import logging
@@ -157,6 +158,42 @@ class Column(BaseObjFromEl):
 		self.type = types[typeId]
 
 
+
+class IndexColumn(BaseObjFromEl):
+
+	def __init__(self, el, tableCols):
+		super().__init__(el)
+
+		for tcol in tableCols:
+			if tcol.id == self['referencedColumn']:
+				break
+		else:
+			assert('Corresponding table column not found', self)
+		self.tableCol = tcol
+
+
+class Index(BaseObjFromEl):
+
+	TYPE_PRIMARY = 'PRIMARY'
+	TYPE_UNIQUE = 'UNIQUE'
+	TYPE_INDEX = 'INDEX'
+
+	TYPES = { TYPE_PRIMARY, TYPE_UNIQUE, TYPE_INDEX }
+
+	def __init__(self, el, tableCols):
+		super().__init__(el)
+
+		assert self['indexType'] in self.TYPES, self
+		assert self['isPrimary'] == (self['indexType'] == self.TYPE_PRIMARY), self
+
+		columns = el.find("./value[@key='columns']")
+		assert len(columns), list(el)
+
+		self.columns = []
+		for column in columns:
+			self.columns.append(IndexColumn(column, tableCols))
+
+
 class Table(BaseObjFromEl):
 	def __init__(self, el, types):
 		super().__init__(el)
@@ -167,6 +204,13 @@ class Table(BaseObjFromEl):
 		self.columns = []
 		for column in columns:
 			self.columns.append(Column(column, types))
+
+		indices = el.find("./value[@key='indices']")
+		assert len(indices), list(el)
+
+		self.indices = []
+		for index in indices:
+			self.indices.append(Index(index, self.columns))
 
 
 class Figure(BaseObjFromEl):
@@ -235,6 +279,10 @@ class Main:
 
 	MWB_INNER_FILE = 'document.mwb.xml'
 
+	# Positions (x,y) scale ratio
+	POS_SCALE_X = 1.8
+	POS_SCALE_Y = 1.2
+
 	def __init__(self):
 		self.log = logging.getLogger('main')
 
@@ -273,10 +321,14 @@ class Main:
 		enumid = 1
 		domains = set()
 
-		tree = lxml.etree.ElementTree(lxml.etree.XML('''
-			<dbmodel pgmodeler-ver="0.9.2" last-position="0,0" last-zoom="1" max-obj-count="4" default-schema="public" default-owner="postgres">
-			</dbmodel>
-		'''))
+		tree = lxml.etree.ElementTree(lxml.etree.Element('dbmodel', {
+			'pgmodeler-ver': "0.9.2",
+			'last-position': "0,0",
+			'last-zoom': "1",
+			'max-obj-count': "4",
+			'default-schema': "public",
+			'default-owner': "postgres",
+		}))
 		root = tree.getroot()
 
 		database = lxml.etree.Element('database', {
@@ -310,8 +362,8 @@ class Main:
 			root.append(tnode)
 
 			pnode = lxml.etree.Element('position', {
-				'x': str(layer['left']),
-				'y': str(layer['top']),
+				'x': str(int(layer['left'] * self.POS_SCALE_X)),
+				'y': str(int(layer['top'] * self.POS_SCALE_Y)),
 			})
 			tnode.append(pnode)
 
@@ -393,14 +445,13 @@ class Main:
 			tnode.append(node)
 
 			pnode = lxml.etree.Element('position', {
-				'x': str(figure['left'] + layer['left']),
-				'y': str(figure['top'] + layer['top']),
+				'x': str(int((figure['left'] + layer['left']) * self.POS_SCALE_X)),
+				'y': str(int((figure['top'] + layer['top']) * self.POS_SCALE_Y)),
 			})
 			tnode.append(pnode)
 
 			#TODO:
 			tabAI = table['nextAutoInc']
-			tabPK = table['primaryKey']
 
 			for col in table.columns:
 				colnode = lxml.etree.Element('column', {
@@ -579,11 +630,45 @@ class Main:
 			# Append at the end since enums must go above
 			root.append(tnode)
 
-			#TODO
-			# Append PK
-			#<constraint name="table_pk" type="pk-constr" table="public.new_table">
-			#    <columns names="aaa" ref-type="src-columns"/>
-			#</constraint>
+			# Append indices and primary key
+			for index in table.indices:
+				if index['indexType'] == Index.TYPE_PRIMARY:
+					# Only create the constraint, no need to create an index since PKs are implicitly indexed
+					constraintnode = lxml.etree.Element('constraint', {
+						'name': table['name'] + '_pk',
+						'type': 'pk-constr',
+						'table': 'public.' + table['name'],
+					})
+					constraintnode.append(lxml.etree.Element('columns', {
+						'names': ','.join([c.tableCol['name'] for c in index.columns]),
+						'ref-type': 'src-columns',
+					}))
+					tnode.append(constraintnode)
+				elif index['indexType'] in (Index.TYPE_UNIQUE, Index.TYPE_INDEX):
+					# Create an index; index goes after the table
+					indexnode = lxml.etree.Element('index', {
+						'name': index['name'],
+						'table': 'public.' + table['name'],
+						'concurrent': 'false',
+						'unique': 'true' if index['unique'] else 'false',
+						'fast-update': 'false',
+						'buffering': 'false',
+						'index-type': 'btree',
+						'factor': '0',
+					})
+					root.append(indexnode)
+					for icol in index.columns:
+						idxelnode = lxml.etree.Element('idxelement', {
+							'use-sorting': 'true',
+							'nulls-first': 'false',
+							'asc-order': 'false' if icol['descend'] else 'true',
+						})
+						indexnode.append(idxelnode)
+						idxelnode.append(lxml.etree.Element('column', {
+							'name': icol.tableCol['name'],
+						}))
+				else:
+					raise NotImplementedError(index['indexType'])
 
 		return tree
 
@@ -633,8 +718,14 @@ class Main:
 		assert len(models) == 1, list(models)
 
 		dbmTree = self.convertModel(models[0])
-		with open('/tmp/test.dbm', 'wb') as out:
-			out.write(lxml.etree.tostring(dbmTree, pretty_print=True))
+
+		# Determine detsination file name and save it
+		root, ext = os.path.splitext(mwbPath)
+		dbmPath = root + '.dbm'
+		print('Saving converted file as ', dbmPath)
+
+		with open(dbmPath, 'wb') as out:
+			out.write(lxml.etree.tostring(dbmTree, pretty_print=True, xml_declaration=True, encoding='UTF-8'))
 
 	def convertModel(self, model):
 		#value {'type': 'object', 'struct-name': 'db.mysql.Catalog', 'id': '4cd06db0-5bd6-11e1-bc3b-e0cb4ec5d89b', 'struct-checksum': '0x82ad3466', 'key': 'catalog'}
