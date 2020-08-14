@@ -66,8 +66,13 @@ class Main:
 		exprNode.text = constraintExpr
 		constraintNode.append(exprNode)
 
-	def createDbm(self, dbname, tables, diagram):
-		''' Creates a new DBM model from the given diagram '''
+	def createDbm(self, dbname, tables, diagram, prependTableNameInIdx=False):
+		''' Creates a new DBM model from the given diagram
+		@param dbname The database name
+		@param tables List of Table objects
+		@param diagram The diagram
+		@param prependTableNameInIdx bool When true, prepend table name in indexes
+		'''
 		enumid = 1
 		domains = set()
 		relnodes = []
@@ -317,7 +322,14 @@ class Main:
 				if dv:
 					assert not dvn
 
-					if dv in ('0', '1', 'TRUE', 'FALSE', 'CURRENT_TIMESTAMP'):
+					# Convert 0/1 to FALSE/TRUE when col is boolean
+					if dv == '1':
+						if type == 'boolean':
+							dv = 'TRUE'
+					elif dv == '0':
+						if type == 'boolean':
+							dv = 'FALSE'
+					elif dv in ('TRUE', 'FALSE', 'CURRENT_TIMESTAMP'):
 						pass
 					elif dv.startswith("'") and dv.endswith("'"):
 						pass
@@ -422,8 +434,9 @@ class Main:
 					tnode.append(constraintnode)
 				elif index['indexType'] in (dbo.Index.TYPE_UNIQUE, dbo.Index.TYPE_INDEX):
 					# Create an index; index goes after the table
+					prefix = table['name'] + '_' if prependTableNameInIdx else ''
 					indexnode = lxml.etree.Element('index', {
-						'name': index['name'],
+						'name': prefix + index['name'],
 						'table': 'public.' + table['name'],
 						'concurrent': 'false',
 						'unique': 'true' if index['unique'] else 'false',
@@ -627,7 +640,8 @@ class Main:
 
 		#TODO: multiple diagrams not supported, choose diagram
 		self.log.info('Using diagram "%s"', convDiagrams[0]['name'])
-		return self.createDbm(schemaName, convTables, convDiagrams[0])
+		return self.createDbm(schemaName, convTables, convDiagrams[0],
+				prependTableNameInIdx=True)
 
 
 if __name__ == '__main__':
