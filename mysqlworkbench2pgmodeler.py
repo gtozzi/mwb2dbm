@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
 
+'''
+mysqlworkbench2pgmodeler - mwb2dbm
+
+@author Gabriele Tozzi <gabriele@tozzi.eu>
+@brief Converts a MySQL Workbench mwb model into a pgModeler DBM model
+@descr This software is in a "works for me" state, far to be complete
+@license GNU GPLv3
+'''
+
 import os
 import re
 import copy

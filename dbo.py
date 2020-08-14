@@ -2,6 +2,7 @@
 '''
 Database Objects
 
+@author Gabriele Tozzi <gabriele@tozzi.eu>
 @brief this file is part of mysqlworkbench2pgmodeler
 '''
 
