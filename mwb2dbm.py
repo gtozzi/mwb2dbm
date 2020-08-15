@@ -73,7 +73,7 @@ class Main:
 		@param diagram The diagram
 		@param prependTableNameInIdx bool When true, prepend table name in indexes
 		'''
-		enumid = 1
+		enums = set()
 		domains = set()
 		relnodes = []
 
@@ -276,14 +276,25 @@ class Main:
 					type = 'varchar'
 					attrs['length'] = '65535'
 				elif col.type.type == 'MEDIUMTEXT':
-					type = 'varchar'
-					attrs['length'] = '16777215'
+					type = 'text'
 				elif col.type.type == 'LONGTEXT':
-					type = 'varchar'
-					attrs['length'] = '4294967295'
+					type = 'text'
 				elif col.type.type == 'ENUM':
-					type = 'enum_' + str(enumid)
-					enumid += 1
+					type = 'enum_' + col['name']
+					if type in enums:
+						type = 'enum_' + str(len(enums) + 1) + '_' + col['name']
+						assert type not in enums, type
+					enums.add(type)
+
+					# Parse the enum list
+					elt = col['datatypeExplicitParams'].strip()
+					assert elt.startswith('(') and elt.endswith(')'), elt
+					els = elt[1:-1].split(',')
+					values = []
+					for el in els:
+						e = el.strip()
+						assert e.startswith("'") and e.endswith("'"), e
+						values.append(e[1:-1].strip())
 
 					# Add an enum type node
 					utypenode = lxml.etree.Element('usertype', {
@@ -299,8 +310,7 @@ class Main:
 						'name': 'postgres',
 					}))
 					utypenode.append(lxml.etree.Element('enumeration', {
-						#TODO: enum list
-						'values': 'abc,def',
+						'values': ','.join(values)
 					}))
 
 					type = 'public.' + type
