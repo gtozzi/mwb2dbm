@@ -216,7 +216,7 @@ END;
 		for it in ('smallint', 'integer', 'bigint'):
 			dname = 'u' + it
 			domains.add(dname)
-			self._addDomainNodes(root, dname, it, 'gt0', 'VALUE >= 0')
+			self._addDomainNodes(root, dname, it, 'ge0', 'VALUE >= 0')
 
 		# Save fks for later
 		fks = []
