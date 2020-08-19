@@ -66,16 +66,63 @@ class Main:
 		exprNode.text = constraintExpr
 		constraintNode.append(exprNode)
 
-	def createDbm(self, dbname, tables, diagram, prependTableNameInIdx=False):
+	def _createUpdateTimestampFunction(self, funcName, colName):
+		function = lxml.etree.Element('function', {
+			'name': funcName,
+			'window-func': "false",
+			'returns-setof': "false",
+			'behavior-type': "CALLED ON NULL INPUT",
+			'function-type': "VOLATILE",
+			'security-type': "SECURITY INVOKER",
+			'execution-cost': "1000",
+			'row-amount': "0",
+		})
+		function.append(lxml.etree.Element('schema', {
+			'name': "public",
+		}))
+		function.append(lxml.etree.Element('role', {
+			'name': "postgres",
+		}))
+		comment = lxml.etree.Element('comment')
+		comment.text = "ON UPDATE CURRENT TIMESTAMP equivalent for column {}".format(colName)
+		function.append(comment)
+		function.append(lxml.etree.Element('language', {
+			'name': "plpgsql",
+			'sql-disabled': "true",
+		}))
+		rtype = lxml.etree.Element('return-type')
+		function.append(rtype)
+		rtype.append(lxml.etree.Element('type', {
+			'name': "trigger",
+			'length': "0",
+		}))
+		definition = lxml.etree.Element('definition')
+		definition.text = """BEGIN
+    IF (NEW != OLD) THEN
+        NEW.{} = CURRENT_TIMESTAMP;
+        RETURN NEW;
+    END IF;
+    RETURN OLD;
+END;
+""".format(colName)
+		function.append(definition)
+
+		return function
+
+	def createDbm(self, dbname, tables, diagram, prependTableNameInIdx=False,
+		deferRelConstraints=None):
 		''' Creates a new DBM model from the given diagram
 		@param dbname The database name
 		@param tables List of Table objects
 		@param diagram The diagram
 		@param prependTableNameInIdx bool When true, prepend table name in indexes
+		@param deferRelConstraints string When given, sets the defer type for every relationship constraint
 		'''
 		enums = set()
 		domains = set()
 		relnodes = []
+		updateTsFunctions = collections.OrderedDict()
+		updateTsTriggers = []
 
 		tree = lxml.etree.ElementTree(lxml.etree.Element('dbmodel', {
 			'pgmodeler-ver': "0.9.2",
@@ -209,7 +256,6 @@ class Main:
 			})
 			tnode.append(pnode)
 
-			#TODO:
 			tabAI = table['nextAutoInc']
 
 			# Custom column sorting
@@ -220,6 +266,7 @@ class Main:
 			])
 			nextcolidx = -1
 
+			aiApplied = False
 			for col in table.columns:
 				nextcolidx += 1
 
@@ -238,9 +285,6 @@ class Main:
 					'length': '0',
 				}
 
-				#TODO
-				#print(col)
-				#print()
 				ai = True if col['autoIncrement'] else False
 				dv = col['defaultValue']
 				dvn = col['defaultValueIsNull']
@@ -249,6 +293,12 @@ class Main:
 				length = col['length']
 				precision = col['precision']
 				scale = col['scale']
+
+				# Only one autoIncrement column per table
+				if ai:
+					if aiApplied:
+						raise NotImplementedError('Only one AI column per table')
+					aiApplied = True
 
 				if col.type.type in ('SMALLINT', 'JSON', 'DECIMAL', 'VARCHAR', 'BIGINT', 'DATE', 'CHAR'):
 					type = col.type.type.lower()
@@ -326,6 +376,8 @@ class Main:
 				if ai:
 					if type in ('smallint', 'integer', 'bigint'):
 						colnode.set('identity-type', "ALWAYS")
+						if tabAI is not None:
+							colnode.set('start', str(tabAI))
 
 				# Apply default value
 				#TODO: ON UPDATE CURRENT TIMESTAMP
@@ -344,8 +396,31 @@ class Main:
 					elif dv.startswith("'") and dv.endswith("'"):
 						pass
 					elif dv == 'CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP':
-						#TODO
 						dv = 'CURRENT_TIMESTAMP'
+						# Since "ON UPDATE CURRENT TIMESTAMP" is not natively supported by pgsql,
+						# will create a trigger to emulate it. Will use the same function for columns
+						# with the same name
+						funcName = "update_{}_on_update".format(col['name'])
+						if funcName not in updateTsFunctions:
+							# New column name, create a new trigger
+							func = self._createUpdateTimestampFunction(funcName, col['name'])
+							updateTsFunctions[funcName] = func
+
+						trigger = lxml.etree.Element('trigger', {
+							'name': table['name'] + "_t_update_" + col['name'],
+							'firing-type': "BEFORE",
+							'per-line': "true",
+							'constraint': "false",
+							'ins-event': "false",
+							'del-event': "false",
+							'upd-event': "true",
+							'trunc-event': "false",
+							'table': "public." + table['name'],
+						})
+						trigger.append(lxml.etree.Element('function', {
+							'signature': "public." + funcName + "()"
+						}))
+						updateTsTriggers.append(trigger)
 					else:
 						self.log.warn('Unknown default value %s', dv)
 					colnode.set('default-value', dv)
@@ -508,7 +583,7 @@ class Main:
 				raise NotImplementedError(fk)
 			scol = fk.columns[0]
 
-			relnode = lxml.etree.Element('relationship', {
+			relattrs = {
 				'name': fk['name'],
 				'type': "rel1n",
 				'layer': "0",
@@ -521,7 +596,14 @@ class Main:
 				'src-required': "true" if fk['mandatory'] else "false",
 				'dst-required': "false",
 				'identifier': "true" if fk.primary else "false",
-			})
+				'upd-action': fk['updateRule'],
+				'del-action': fk['deleteRule'],
+			}
+			if deferRelConstraints:
+				relattrs['deferrable'] = "true"
+				relattrs['defer-type'] = 'INITIALLY IMMEDIATE'
+
+			relnode = lxml.etree.Element('relationship', relattrs)
 			lnode = lxml.etree.Element('label', {
 				'ref-type': "name-label",
 			})
@@ -531,6 +613,13 @@ class Main:
 				'y': "0",
 			}))
 			root.append(relnode)
+
+		# Now append functions and triggers for ON UPDATE CURRENT TIMESTAMP emulation
+		for func in updateTsFunctions.values():
+			root.append(func)
+
+		for trigger in updateTsTriggers:
+			root.append(trigger)
 
 		return tree
 
@@ -651,7 +740,7 @@ class Main:
 		#TODO: multiple diagrams not supported, choose diagram
 		self.log.info('Using diagram "%s"', convDiagrams[0]['name'])
 		return self.createDbm(schemaName, convTables, convDiagrams[0],
-				prependTableNameInIdx=True)
+				prependTableNameInIdx=True, deferRelConstraints='INITIALLY IMMEDIATE')
 
 
 if __name__ == '__main__':
