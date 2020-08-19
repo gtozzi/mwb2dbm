@@ -225,6 +225,8 @@ END;
 
 		# Create tables
 		for table in tables:
+			colConstraints = []
+
 			figure = diagram.getTableFigure(table)
 			layer = diagram.getFigureLayer(figure)
 
@@ -380,7 +382,6 @@ END;
 							colnode.set('start', str(tabAI))
 
 				# Apply default value
-				#TODO: ON UPDATE CURRENT TIMESTAMP
 				if dv:
 					assert not dvn
 
@@ -473,14 +474,18 @@ END;
 									# Unsigned is not supported in PGSQL, so use a special domain
 									type = 'public.u' + type
 							else:
-								self.log.error('Unsupported unsigned flag on %s field', type)
+								# Create a specific check constraint and add it
+								constraintnode = lxml.etree.Element('constraint', {
+									'name': table['name'] + '_' + col['name'] + '_gt0',
+									'type': 'ck-constr',
+									'table': 'public.' + table['name'],
+								})
+								expr = lxml.etree.Element('expression')
+								expr.text = "{} > 0".format(col['name'])
+								constraintnode.append(expr)
+								colConstraints.append(constraintnode)
 						else:
 							self.log.warn('Unsupported flag: %s', flag)
-
-				# TODO: integer/text precision
-				# TODO: default
-				# TODO: attribs
-				# TODO: alias
 
 				typenode = lxml.etree.Element('type', {
 					'name': type,
@@ -493,6 +498,10 @@ END;
 					commentnode = lxml.etree.Element('comment')
 					commentnode.text = col['comment']
 					colnode.append(commentnode)
+
+			# Columns constraints go after the table element
+			for constraint in colConstraints:
+				tnode.append(constraint)
 
 			# Append at the end since enums must go above
 			root.append(tnode)
