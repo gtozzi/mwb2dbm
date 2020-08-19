@@ -221,6 +221,9 @@ END;
 		# Save fks for later
 		fks = []
 
+		# Save indexes for later
+		indexes = []
+
 		# Create tables
 		for table in tables:
 			colConstraints = []
@@ -506,10 +509,11 @@ END;
 
 			# Append indices and primary key
 			for index in table.indices:
-				# Filter out columns which are part of a FK (relation autogenerates the index)
+				# If all columns are part of a relation and index is not unique,
+				# filter out columns which are part of a FK (relation autogenerates the index)
 				icols = [c for c in index.columns if not c.tableCol.fk]
 
-				if not icols:
+				if not icols and index['indexType'] != dbo.Index.TYPE_UNIQUE:
 					continue
 
 				if index['indexType'] == dbo.Index.TYPE_PRIMARY:
@@ -520,7 +524,7 @@ END;
 						'table': 'public.' + table['name'],
 					})
 					constraintnode.append(lxml.etree.Element('columns', {
-						'names': ','.join([c.tableCol['name'] for c in icols if not c.tableCol.fk]),
+						'names': ','.join([c.tableCol['name'] for c in index.columns if not c.tableCol.fk]),
 						'ref-type': 'src-columns',
 					}))
 					tnode.append(constraintnode)
@@ -537,8 +541,10 @@ END;
 						'index-type': 'btree',
 						'factor': '0',
 					})
-					root.append(indexnode)
-					for icol in icols:
+					indexes.append(indexnode)
+					for icol in index.columns:
+						if index['name'] == 'filiale_unica':
+							print(icol)
 						idxelnode = lxml.etree.Element('idxelement', {
 							'use-sorting': 'true',
 							'nulls-first': 'false',
@@ -570,7 +576,7 @@ END;
 						'index': str(idx),
 					}))
 
-		# Append relation nodes at the end, so all tables have been created now
+		# Append relation nodes now end, so all tables have been created now
 		# process PKs earlier
 		for fk in sorted(fks, key=lambda x: x.primary, reverse=True):
 			if 'referencedTable' not in fk:
@@ -600,7 +606,7 @@ END;
 				'src-fk-pattern': "{st}_fk",
 				'src-table': "public." + rtable['name'],
 				'dst-table': "public." + fk.table['name'],
-				'src-required': "true" if fk['mandatory'] else "false",
+				'src-required': "true" if fk['mandatory'] and scol['isNotNull'] else "false",
 				'dst-required': "false",
 				'identifier': "true" if fk.primary else "false",
 				'upd-action': fk['updateRule'],
@@ -617,6 +623,10 @@ END;
 				'y': "0",
 			}))
 			root.append(relnode)
+
+		# Now append indexes, since relations may have added some needed columns
+		for index in indexes:
+			root.append(index)
 
 		# Now append functions and triggers for ON UPDATE CURRENT TIMESTAMP emulation
 		for func in updateTsFunctions.values():
