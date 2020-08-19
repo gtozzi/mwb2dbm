@@ -109,14 +109,12 @@ END;
 
 		return function
 
-	def createDbm(self, dbname, tables, diagram, prependTableNameInIdx=False,
-		deferRelConstraints=None):
+	def createDbm(self, dbname, tables, diagram, prependTableNameInIdx=False):
 		''' Creates a new DBM model from the given diagram
 		@param dbname The database name
 		@param tables List of Table objects
 		@param diagram The diagram
 		@param prependTableNameInIdx bool When true, prepend table name in indexes
-		@param deferRelConstraints string When given, sets the defer type for every relationship constraint
 		'''
 		enums = set()
 		domains = set()
@@ -608,9 +606,6 @@ END;
 				'upd-action': fk['updateRule'],
 				'del-action': fk['deleteRule'],
 			}
-			if deferRelConstraints:
-				relattrs['deferrable'] = "true"
-				relattrs['defer-type'] = 'INITIALLY IMMEDIATE'
 
 			relnode = lxml.etree.Element('relationship', relattrs)
 			lnode = lxml.etree.Element('label', {
@@ -749,7 +744,7 @@ END;
 		#TODO: multiple diagrams not supported, choose diagram
 		self.log.info('Using diagram "%s"', convDiagrams[0]['name'])
 		return self.createDbm(schemaName, convTables, convDiagrams[0],
-				prependTableNameInIdx=True, deferRelConstraints='INITIALLY IMMEDIATE')
+				prependTableNameInIdx=True)
 
 
 if __name__ == '__main__':
