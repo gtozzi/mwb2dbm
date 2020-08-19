@@ -477,12 +477,12 @@ END;
 							else:
 								# Create a specific check constraint and add it
 								constraintnode = lxml.etree.Element('constraint', {
-									'name': table['name'] + '_' + col['name'] + '_gt0',
+									'name': table['name'] + '_' + col['name'] + '_ge0',
 									'type': 'ck-constr',
 									'table': 'public.' + table['name'],
 								})
 								expr = lxml.etree.Element('expression')
-								expr.text = "{} > 0".format(col['name'])
+								expr.text = "{} >= 0".format(col['name'])
 								constraintnode.append(expr)
 								colConstraints.append(constraintnode)
 						else:
