@@ -98,7 +98,7 @@ class Main:
 		}))
 		definition = lxml.etree.Element('definition')
 		definition.text = """BEGIN
-    IF (NEW != OLD) THEN
+    IF (NEW::varchar != OLD::varchar) THEN
         NEW.{} = CURRENT_TIMESTAMP;
         RETURN NEW;
     END IF;
