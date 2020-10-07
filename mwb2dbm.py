@@ -637,11 +637,18 @@ END;
 
 		return tree
 
-	def convert(self, mwbPath):
+	def loadDbm(self, path):
+		''' Loads a DBM file from path '''
+		return lxml.etree.parse(path)
+
+	def convert(self, mwbPath, merge=[]):
 		''' Perform the conversion
 
 		@param mwbPath string: The source file path
 		'''
+
+		if merge is None:
+			merge = []
 
 		# Extract XML from zip
 		with zipfile.ZipFile(mwbPath, 'r') as mwbFile:
@@ -684,7 +691,13 @@ END;
 
 		dbmTree = self.convertModel(models[0])
 
-		# Determine detsination file name and save it
+		# Merge listed DBMs
+		for mergePath in merge:
+			print('Merging from ', mergePath)
+			mergeTree = self.loadDbm(mergePath)
+			self.mergeDbm(dbmTree, mergeTree)
+
+		# Determine destination file name and save it
 		root, ext = os.path.splitext(mwbPath)
 		dbmPath = root + '.dbm'
 		print('Saving converted file as ', dbmPath)
@@ -756,15 +769,27 @@ END;
 		return self.createDbm(schemaName, convTables, convDiagrams[0],
 				prependTableNameInIdx=True)
 
+	def mergeDbm(self, origTree, mergeTree):
+		''' Merges merge model into orig '''
+		origRoot = origTree.getroot()
+		mergeRoot = mergeTree.getroot()
+
+		for child in mergeRoot:
+			if child.tag == 'function':
+				origRoot.append(child)
+
+			# TODO: support more eletemnts
+
 
 if __name__ == '__main__':
 	import argparse
 
 	parser = argparse.ArgumentParser(description='Convert a schema from MySQL Workbench to pgModeler format')
 	parser.add_argument('mwb', help='the mwb source')
+	parser.add_argument('--merge', action='append', help='merge content from this dbm into the final result, this is useful for hand-converting stored functions')
 
 	args = parser.parse_args()
 
 	logging.basicConfig(level=logging.DEBUG)
 
-	Main().convert(args.mwb)
+	Main().convert(args.mwb, args.merge)
