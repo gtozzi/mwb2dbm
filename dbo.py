@@ -295,11 +295,12 @@ class Diagram(BaseObjFromEl):
 		raise KeyError()
 
 	def getFigureLayer(self, figure):
+		''' Returns the figure layer, or None if no layer is found '''
 		for layer in self.layers:
 			if layer.id == figure['layer']:
 				return layer
 
-		raise KeyError()
+		return None
 
 	def getFirstTableFigureForLayer(self, layer):
 		for figure in self.figures:

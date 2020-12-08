@@ -248,14 +248,15 @@ END;
 			})
 			tnode.append(rnode)
 
-			node = lxml.etree.Element('tag', {
-				'name': layer['name'].lower(),
-			})
-			tnode.append(node)
+			if layer:
+				node = lxml.etree.Element('tag', {
+					'name': layer['name'].lower(),
+				})
+				tnode.append(node)
 
 			pnode = lxml.etree.Element('position', {
-				'x': str(int((figure['left'] + layer['left']) * self.POS_SCALE_X)),
-				'y': str(int((figure['top'] + layer['top']) * self.POS_SCALE_Y)),
+				'x': str(int((figure['left'] + layer['left'] if layer else 0) * self.POS_SCALE_X)),
+				'y': str(int((figure['top'] + layer['top'] if layer else 0) * self.POS_SCALE_Y)),
 			})
 			tnode.append(pnode)
 
