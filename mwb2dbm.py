@@ -809,7 +809,7 @@ END;
 		mergeRoot = mergeTree.getroot()
 
 		for child in mergeRoot:
-			if child.tag == 'function':
+			if child.tag in ('function', 'aggregate'):
 				origRoot.append(child)
 
 			# TODO: support more elements
