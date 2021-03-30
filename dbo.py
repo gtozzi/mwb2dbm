@@ -10,6 +10,8 @@ import re
 import collections
 
 
+MAX_NAME_LEN = 63
+
 
 class Color:
 	''' And RGB color '''

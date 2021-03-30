@@ -109,13 +109,14 @@ END;
 
 		return function
 
-	def createDbm(self, dbname, tables, diagram, prependTableNameInIdx=False, nocitext=False):
+	def createDbm(self, dbname, tables, diagram, prependTableNameInIdx=False, nocitext=False, nofkidx=False):
 		''' Creates a new DBM model from the given diagram
 		@param dbname The database name
 		@param tables List of Table objects
 		@param diagram The diagram
 		@param prependTableNameInIdx bool When true, prepend table name in indexes
-		@param nocitext If true, do not add citext module
+		@param nocitext If True, do not add citext module
+		@param nofkidx If True, skip foreign-key indexes
 		'''
 		enums = set()
 		domains = set()
@@ -542,10 +543,11 @@ END;
 			# Append indices and primary key
 			for index in table.indices:
 				# If all columns are part of a relation and index is not unique,
-				# filter out columns which are part of a FK (relation autogenerates the index)
+				# filter out columns which are part of a FK if nofkidx
 				icols = [c for c in index.columns if not c.tableCol.fk]
+				keepidx = (dbo.Index.TYPE_UNIQUE,) if nofkidx else (dbo.Index.TYPE_UNIQUE, dbo.Index.TYPE_INDEX)
 
-				if not icols and index['indexType'] != dbo.Index.TYPE_UNIQUE:
+				if not icols and index['indexType'] not in keepidx:
 					continue
 
 				if index['indexType'] == dbo.Index.TYPE_PRIMARY:
@@ -560,11 +562,22 @@ END;
 						'ref-type': 'src-columns',
 					}))
 					tnode.append(constraintnode)
+
 				elif index['indexType'] in (dbo.Index.TYPE_UNIQUE, dbo.Index.TYPE_INDEX):
 					# Create an index; index goes after the table
-					prefix = table['name'] + '_' if prependTableNameInIdx else ''
+					# add table name prefix if nìmissing
+					if index['name'].find(table['name']) == -1:
+						prefix = table['name'] + '_' if prependTableNameInIdx else ''
+					else:
+						prefix = ''
+					idxname = prefix + index['name']
+					if len(idxname) > dbo.MAX_NAME_LEN:
+						# Truncate too long name
+						# TODO: improve
+						assert idxname.endswith('_idx'), idxname
+						idxname = idxname[:dbo.MAX_NAME_LEN-4] + '_idx'
 					indexnode = lxml.etree.Element('index', {
-						'name': prefix + index['name'],
+						'name': idxname,
 						'table': 'public.' + table['name'],
 						'concurrent': 'false',
 						'unique': 'true' if index['unique'] else 'false',
@@ -575,8 +588,6 @@ END;
 					})
 					indexes.append(indexnode)
 					for icol in index.columns:
-						if index['name'] == 'filiale_unica':
-							print(icol)
 						idxelnode = lxml.etree.Element('idxelement', {
 							'use-sorting': 'true',
 							'nulls-first': 'false',
@@ -671,14 +682,16 @@ END;
 
 	def loadDbm(self, path):
 		''' Loads a DBM file from path '''
-		return lxml.etree.parse(path)
+		parser = lxml.etree.XMLParser(remove_blank_text=True)
+		return lxml.etree.parse(path, parser)
 
-	def convert(self, mwbPath, merge=[], nocitext=False):
+	def convert(self, mwbPath, merge=[], nocitext=False, nofkidx=False):
 		''' Perform the conversion
 
 		@param mwbPath string: The source file path
 		@param merge list of dbm files to merge
-		@param nocitext If true, will not convert (var)char to citext
+		@param nocitext If True, will not convert (var)char to citext
+		@param nofkidx If True, will not create indexes for foreign keys
 		'''
 
 		if merge is None:
@@ -739,7 +752,7 @@ END;
 		with open(dbmPath, 'wb') as out:
 			out.write(lxml.etree.tostring(dbmTree, pretty_print=True, xml_declaration=True, encoding='UTF-8'))
 
-	def convertModel(self, model, nocitext=False):
+	def convertModel(self, model, nocitext=False, nofkidx=False):
 		#value {'type': 'object', 'struct-name': 'db.mysql.Catalog', 'id': '4cd06db0-5bd6-11e1-bc3b-e0cb4ec5d89b', 'struct-checksum': '0x82ad3466', 'key': 'catalog'}
 		#value {'type': 'string', 'key': 'connectionNotation'}
 		#value {'_ptr_': '0x558a018542b0', 'type': 'list', 'content-type': 'object', 'content-struct-name': 'db.mgmt.Connection', 'key': 'connections'}
@@ -801,7 +814,7 @@ END;
 		#TODO: multiple diagrams not supported, choose diagram
 		self.log.info('Using diagram "%s"', convDiagrams[0]['name'])
 		return self.createDbm(schemaName, convTables, convDiagrams[0],
-				prependTableNameInIdx=True, nocitext=nocitext)
+				prependTableNameInIdx=True, nocitext=nocitext, nofkidx=nofkidx)
 
 	def mergeDbm(self, origTree, mergeTree):
 		''' Merges merge model into orig '''
@@ -822,9 +835,10 @@ if __name__ == '__main__':
 	parser.add_argument('mwb', help='the mwb source')
 	parser.add_argument('--merge', action='append', help='merge content from this dbm into the final result, this is useful for hand-converting stored functions')
 	parser.add_argument('--nocitext', action='store_true', help='do not convert char to citext')
+	parser.add_argument('--nofkidx', action='store_true', help='do not create indexes for foreign keys')
 
 	args = parser.parse_args()
 
 	logging.basicConfig(level=logging.DEBUG)
 
-	Main().convert(args.mwb, args.merge, args.nocitext)
+	Main().convert(args.mwb, args.merge, args.nocitext, args.nofkidx)
