@@ -109,12 +109,13 @@ END;
 
 		return function
 
-	def createDbm(self, dbname, tables, diagram, prependTableNameInIdx=False):
+	def createDbm(self, dbname, tables, diagram, prependTableNameInIdx=False, nocitext=False):
 		''' Creates a new DBM model from the given diagram
 		@param dbname The database name
 		@param tables List of Table objects
 		@param diagram The diagram
 		@param prependTableNameInIdx bool When true, prepend table name in indexes
+		@param nocitext If true, do not add citext module
 		'''
 		enums = set()
 		domains = set()
@@ -146,6 +147,16 @@ END;
 			'sql-disabled': "true",
 		})
 		root.append(schema)
+
+		if not nocitext:
+			citext = lxml.etree.Element('extension', {
+				'name': "citext",
+				'handles-type': "true",
+			})
+			citext.append(lxml.etree.Element('schema', {
+				'name': "public",
+			}))
+			root.append(citext)
 
 		# Create layers
 		for layer in diagram.layers:
@@ -489,6 +500,26 @@ END;
 						else:
 							self.log.warn('Unsupported flag: %s', flag)
 
+				# Convert char types to citext, add check constraint for length
+				if not nocitext and type in ('varchar', 'char'):
+					assert 'precision' not in attrs, attrs
+					assert 'length' in attrs, attrs
+
+					op = '=' if type == 'char' else '<='
+
+					constraintnode = lxml.etree.Element('constraint', {
+						'name': table['name'] + '_' + col['name'] + '_len',
+						'type': 'ck-constr',
+						'table': 'public.' + table['name'],
+					})
+					expr = lxml.etree.Element('expression')
+					expr.text = "length({}) {} {}".format(col['name'], op, attrs['length'])
+					constraintnode.append(expr)
+					colConstraints.append(constraintnode)
+
+					type = 'citext'
+					del attrs['length']
+
 				typenode = lxml.etree.Element('type', {
 					'name': type,
 				})
@@ -642,10 +673,12 @@ END;
 		''' Loads a DBM file from path '''
 		return lxml.etree.parse(path)
 
-	def convert(self, mwbPath, merge=[]):
+	def convert(self, mwbPath, merge=[], nocitext=False):
 		''' Perform the conversion
 
 		@param mwbPath string: The source file path
+		@param merge list of dbm files to merge
+		@param nocitext If true, will not convert (var)char to citext
 		'''
 
 		if merge is None:
@@ -690,7 +723,7 @@ END;
 		assert models, list(document)
 		assert len(models) == 1, list(models)
 
-		dbmTree = self.convertModel(models[0])
+		dbmTree = self.convertModel(models[0], nocitext)
 
 		# Merge listed DBMs
 		for mergePath in merge:
@@ -706,7 +739,7 @@ END;
 		with open(dbmPath, 'wb') as out:
 			out.write(lxml.etree.tostring(dbmTree, pretty_print=True, xml_declaration=True, encoding='UTF-8'))
 
-	def convertModel(self, model):
+	def convertModel(self, model, nocitext=False):
 		#value {'type': 'object', 'struct-name': 'db.mysql.Catalog', 'id': '4cd06db0-5bd6-11e1-bc3b-e0cb4ec5d89b', 'struct-checksum': '0x82ad3466', 'key': 'catalog'}
 		#value {'type': 'string', 'key': 'connectionNotation'}
 		#value {'_ptr_': '0x558a018542b0', 'type': 'list', 'content-type': 'object', 'content-struct-name': 'db.mgmt.Connection', 'key': 'connections'}
@@ -768,7 +801,7 @@ END;
 		#TODO: multiple diagrams not supported, choose diagram
 		self.log.info('Using diagram "%s"', convDiagrams[0]['name'])
 		return self.createDbm(schemaName, convTables, convDiagrams[0],
-				prependTableNameInIdx=True)
+				prependTableNameInIdx=True, nocitext=nocitext)
 
 	def mergeDbm(self, origTree, mergeTree):
 		''' Merges merge model into orig '''
@@ -779,7 +812,7 @@ END;
 			if child.tag == 'function':
 				origRoot.append(child)
 
-			# TODO: support more eletemnts
+			# TODO: support more elements
 
 
 if __name__ == '__main__':
@@ -788,9 +821,10 @@ if __name__ == '__main__':
 	parser = argparse.ArgumentParser(description='Convert a schema from MySQL Workbench to pgModeler format')
 	parser.add_argument('mwb', help='the mwb source')
 	parser.add_argument('--merge', action='append', help='merge content from this dbm into the final result, this is useful for hand-converting stored functions')
+	parser.add_argument('--nocitext', action='store_true', help='do not convert char to citext')
 
 	args = parser.parse_args()
 
 	logging.basicConfig(level=logging.DEBUG)
 
-	Main().convert(args.mwb, args.merge)
+	Main().convert(args.mwb, args.merge, args.nocitext)
