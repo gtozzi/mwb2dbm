@@ -517,7 +517,7 @@ END;
 						'table': 'public.' + table['name'],
 					})
 					expr = lxml.etree.Element('expression')
-					expr.text = "length({}) {} {}".format(col['name'], op, attrs['length'])
+					expr.text = "length(\"{}\") {} {}".format(col['name'], op, attrs['length'])
 					constraintnode.append(expr)
 					colConstraints.append(constraintnode)
 
