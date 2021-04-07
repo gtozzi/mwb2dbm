@@ -858,9 +858,14 @@ END;
 		origRoot = origTree.getroot()
 		mergeRoot = mergeTree.getroot()
 
+		# Add functions before triggers, as some trigger may be using the added functions
+		firstTriggerTag = origRoot.find("trigger")
 		for child in mergeRoot:
 			if child.tag in ('function', 'aggregate'):
-				origRoot.append(child)
+				if firstTriggerTag is not None:
+					firstTriggerTag.addprevious(child)
+				else:
+					origRoot.append(child)
 
 			# TODO: support more elements
 
