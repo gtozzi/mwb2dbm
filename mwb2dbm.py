@@ -15,7 +15,9 @@ import copy
 import logging
 import zipfile
 import collections
+import configparser
 import lxml.etree
+import sys
 
 import dbo
 
@@ -109,7 +111,7 @@ END;
 
 		return function
 
-	def createDbm(self, dbname, tables, diagram, prependTableNameInIdx=False, nocitext=False, nofkidx=False):
+	def createDbm(self, dbname, tables, diagram, prependTableNameInIdx=False, nocitext=False, nofkidx=False, triggerConfig=None):
 		''' Creates a new DBM model from the given diagram
 		@param dbname The database name
 		@param tables List of Table objects
@@ -123,6 +125,7 @@ END;
 		relnodes = []
 		updateTsFunctions = collections.OrderedDict()
 		updateTsTriggers = []
+		triggers = []
 
 		tree = lxml.etree.ElementTree(lxml.etree.Element('dbmodel', {
 			'pgmodeler-ver': "0.9.2",
@@ -619,6 +622,36 @@ END;
 						'index': str(idx),
 					}))
 
+			# Now append triggers from source db
+			if triggerConfig:
+				for trigger in table.triggers:
+					# Check the trigger exists in config
+					if not triggerConfig.getFunctionForTrigger(trigger.name):
+						self.log.warning('Trigger %s not present in trigger config: skipping', trigger.name)
+						continue
+
+					trigEvIns = (trigger.event == 'INSERT')
+					trigEvDel = (trigger.event == 'DELETE')
+					trigEvUpd = (trigger.event == 'UPDATE')
+					trigNode = lxml.etree.Element('trigger', {
+						'name': trigger.name,
+						'firing-type': trigger.timing,
+						'per-line': 'true',
+						'constraint': 'false',
+						'ins-event': 'true' if trigEvIns else 'false',
+						'del-event': 'true' if trigEvDel else 'false',
+						'upd-event': 'true' if trigEvUpd else 'false',
+						'trunc-event': 'false',
+						'table': 'public.' + table['name']
+					})
+					trigFuncNode = lxml.etree.Element('function', {
+						'signature': triggerConfig.getFunctionForTrigger(trigger.name)
+					})
+					trigNode.append(trigFuncNode)
+					triggers.append(trigNode)
+			else:
+				self.log.warning('Skipping triggers generation as no valid trigger config file is provided')
+
 		# Append relation nodes now end, so all tables have been created now
 		# process PKs earlier
 		for fk in sorted(fks, key=lambda x: x.primary, reverse=True):
@@ -678,6 +711,9 @@ END;
 		for trigger in updateTsTriggers:
 			root.append(trigger)
 
+		for trigger in triggers:
+			root.append(trigger)
+
 		return tree
 
 	def loadDbm(self, path):
@@ -685,7 +721,7 @@ END;
 		parser = lxml.etree.XMLParser(remove_blank_text=True)
 		return lxml.etree.parse(path, parser)
 
-	def convert(self, mwbPath, merge=[], nocitext=False, nofkidx=False):
+	def convert(self, mwbPath, merge=[], nocitext=False, nofkidx=False, triggerConfig=None):
 		''' Perform the conversion
 
 		@param mwbPath string: The source file path
@@ -736,7 +772,7 @@ END;
 		assert models, list(document)
 		assert len(models) == 1, list(models)
 
-		dbmTree = self.convertModel(models[0], nocitext)
+		dbmTree = self.convertModel(models[0], nocitext, triggerConfig=triggerConfig)
 
 		# Merge listed DBMs
 		for mergePath in merge:
@@ -752,7 +788,7 @@ END;
 		with open(dbmPath, 'wb') as out:
 			out.write(lxml.etree.tostring(dbmTree, pretty_print=True, xml_declaration=True, encoding='UTF-8'))
 
-	def convertModel(self, model, nocitext=False, nofkidx=False):
+	def convertModel(self, model, nocitext=False, nofkidx=False, triggerConfig=None):
 		#value {'type': 'object', 'struct-name': 'db.mysql.Catalog', 'id': '4cd06db0-5bd6-11e1-bc3b-e0cb4ec5d89b', 'struct-checksum': '0x82ad3466', 'key': 'catalog'}
 		#value {'type': 'string', 'key': 'connectionNotation'}
 		#value {'_ptr_': '0x558a018542b0', 'type': 'list', 'content-type': 'object', 'content-struct-name': 'db.mgmt.Connection', 'key': 'connections'}
@@ -813,19 +849,41 @@ END;
 
 		#TODO: multiple diagrams not supported, choose diagram
 		self.log.info('Using diagram "%s"', convDiagrams[0]['name'])
+
 		return self.createDbm(schemaName, convTables, convDiagrams[0],
-				prependTableNameInIdx=True, nocitext=nocitext, nofkidx=nofkidx)
+				prependTableNameInIdx=True, nocitext=nocitext, nofkidx=nofkidx, triggerConfig=triggerConfig)
 
 	def mergeDbm(self, origTree, mergeTree):
 		''' Merges merge model into orig '''
 		origRoot = origTree.getroot()
 		mergeRoot = mergeTree.getroot()
 
+		# Add functions before triggers, as some trigger may be using the added functions
+		firstTriggerTag = origRoot.find("trigger")
 		for child in mergeRoot:
-			if child.tag in ('function', 'aggregate'):
-				origRoot.append(child)
+			if child.tag in ('function', 'aggregate', 'extension'):
+				if firstTriggerTag is not None:
+					firstTriggerTag.addprevious(child)
+				else:
+					origRoot.append(child)
 
 			# TODO: support more elements
+
+
+class TriggerConfig(configparser.ConfigParser):
+	"""
+		Trigger configuration: contains the information about triggers to be added
+	"""
+	# def __init__(self):
+	# 	super().__init__
+	# 	# Check if section exists
+	# 	if 'Triggers' not in self.sections():
+	# 		logging.warning('Provided trigger configuration file does not contain a Triggers section and will be ignored')
+
+	def getFunctionForTrigger(self, triggerName):
+		if (not self['Triggers']) or (triggerName not in self['Triggers']):
+			return None
+		return self['Triggers'][triggerName]
 
 
 if __name__ == '__main__':
@@ -833,6 +891,7 @@ if __name__ == '__main__':
 
 	parser = argparse.ArgumentParser(description='Convert a schema from MySQL Workbench to pgModeler format')
 	parser.add_argument('mwb', help='the mwb source')
+	parser.add_argument('--triggers', action='store', help='use this triggers definition file to create triggers in the resulting dbm')
 	parser.add_argument('--merge', action='append', help='merge content from this dbm into the final result, this is useful for hand-converting stored functions')
 	parser.add_argument('--nocitext', action='store_true', help='do not convert char to citext')
 	parser.add_argument('--nofkidx', action='store_true', help='do not create indexes for foreign keys')
@@ -841,4 +900,14 @@ if __name__ == '__main__':
 
 	logging.basicConfig(level=logging.DEBUG)
 
-	Main().convert(args.mwb, args.merge, args.nocitext, args.nofkidx)
+	triggerConfig = None
+	if args.triggers:
+		triggerConfig = TriggerConfig()
+		try:
+			triggerConfig.read(args.triggers)
+		except IOError:
+			print("ERROR: Couldn't open trigger config file", args.triggers)
+			parser.print_help()
+			sys.exit(1)
+
+	Main().convert(args.mwb, args.merge, args.nocitext, args.nofkidx, triggerConfig)

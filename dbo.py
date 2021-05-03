@@ -229,6 +229,17 @@ class ForeignKey(BaseObjFromEl):
 				if idx.index['indexType'] == Index.TYPE_PRIMARY:
 					self.primary = True
 
+class Trigger(BaseObjFromEl):
+
+	def __init__(self, el, table):
+		super().__init__(el)
+
+		self.table = table
+		self.timing = el.find("./value[@key='timing']").text
+		self.event = el.find("./value[@key='event']").text
+		self.name = el.find("./value[@key='name']").text
+		#self.procedureCode = el.find("./value[@key='sqlDefinition']").text
+
 class Table(BaseObjFromEl):
 	def __init__(self, el, types):
 		super().__init__(el)
@@ -253,6 +264,11 @@ class Table(BaseObjFromEl):
 		for fk in fks:
 			self.fks.append(ForeignKey(fk, self))
 
+		triggers = el.find("./value[@key='triggers']")
+
+		self.triggers = []
+		for trigger in triggers:
+			self.triggers.append(Trigger(trigger, self))
 
 class Figure(BaseObjFromEl):
 
