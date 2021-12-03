@@ -270,6 +270,13 @@ class Table(BaseObjFromEl):
 		for trigger in triggers:
 			self.triggers.append(Trigger(trigger, self))
 
+class View(BaseObjFromEl):
+	def __init__(self, el):
+		super().__init__(el)
+
+		self.name = el.find("./value[@key='name']").text
+		self.definition = el.find("./value[@key='sqlDefinition']").text
+
 class Figure(BaseObjFromEl):
 
 	TABLE_TYPE = 'workbench.physical.TableFigure'

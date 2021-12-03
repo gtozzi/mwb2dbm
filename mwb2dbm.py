@@ -111,10 +111,11 @@ END;
 
 		return function
 
-	def createDbm(self, dbname, tables, diagram, prependTableNameInIdx=False, nocitext=False, nofkidx=False, triggerConfig=None):
+	def createDbm(self, dbname, tables, views, diagram, prependTableNameInIdx=False, nocitext=False, nofkidx=False, triggerConfig=None):
 		''' Creates a new DBM model from the given diagram
 		@param dbname The database name
 		@param tables List of Table objects
+		@param views List of View objects
 		@param diagram The diagram
 		@param prependTableNameInIdx bool When true, prepend table name in indexes
 		@param nocitext If True, do not add citext module
@@ -126,6 +127,14 @@ END;
 		updateTsFunctions = collections.OrderedDict()
 		updateTsTriggers = []
 		triggers = []
+
+		# DEBUG
+		print('====================== VIEW ======================')
+		for v in views:
+			print(v.name)
+			print(v.definition)
+		print('====================== VIEW ======================')
+		# DEBUG
 
 		tree = lxml.etree.ElementTree(lxml.etree.Element('dbmodel', {
 			'pgmodeler-ver': "0.9.2",
@@ -839,6 +848,13 @@ END;
 		for table in tables:
 			convTables.append(dbo.Table(table, types))
 
+		views = schema.find("./value[@key='views']")
+		assert len(views), list(schema)
+
+		convViews = []
+		for view in views:
+			convViews.append(dbo.View(view))
+
 		diagrams = model.find("./value[@key='diagrams']")
 		assert len(diagrams), list(schema)
 
@@ -850,7 +866,7 @@ END;
 		#TODO: multiple diagrams not supported, choose diagram
 		self.log.info('Using diagram "%s"', convDiagrams[0]['name'])
 
-		return self.createDbm(schemaName, convTables, convDiagrams[0],
+		return self.createDbm(schemaName, convTables, convViews, convDiagrams[0],
 				prependTableNameInIdx=True, nocitext=nocitext, nofkidx=nofkidx, triggerConfig=triggerConfig)
 
 	def mergeDbm(self, origTree, mergeTree):
