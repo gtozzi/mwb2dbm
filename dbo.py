@@ -11,7 +11,7 @@ import collections
 
 
 MAX_NAME_LEN = 63
-
+VIEW_CLEAN_REGEX = r"CREATE VIEW `?[A-Za-z1-9_]+`? AS"
 
 class Color:
 	''' And RGB color '''
@@ -275,11 +275,16 @@ class View(BaseObjFromEl):
 		super().__init__(el)
 
 		self.name = el.find("./value[@key='name']").text
-		self.definition = el.find("./value[@key='sqlDefinition']").text
+		self.comment = el.find("./value[@key='comment']").text
+
+		# Remove "CREATE VIEW ... AS" from definition
+		dirtydef = el.find("./value[@key='sqlDefinition']").text
+		self.definition = re.sub(VIEW_CLEAN_REGEX, "", dirtydef, 0, re.MULTILINE)
 
 class Figure(BaseObjFromEl):
 
 	TABLE_TYPE = 'workbench.physical.TableFigure'
+	VIEW_TYPE = 'workbench.physical.ViewFigure'
 
 	def __init__(self, el):
 		super().__init__(el)
@@ -315,6 +320,13 @@ class Diagram(BaseObjFromEl):
 	def getTableFigure(self, table):
 		for figure in self.figures:
 			if figure.type == Figure.TABLE_TYPE and figure['table'] == table.id:
+				return figure
+
+		raise KeyError()
+
+	def getViewFigure(self, view):
+		for figure in self.figures:
+			if figure.type == Figure.VIEW_TYPE and figure['view'] == view.id:
 				return figure
 
 		raise KeyError()

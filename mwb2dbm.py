@@ -128,14 +128,6 @@ END;
 		updateTsTriggers = []
 		triggers = []
 
-		# DEBUG
-		print('====================== VIEW ======================')
-		for v in views:
-			print(v.name)
-			print(v.definition)
-		print('====================== VIEW ======================')
-		# DEBUG
-
 		tree = lxml.etree.ElementTree(lxml.etree.Element('dbmodel', {
 			'pgmodeler-ver': "0.9.2",
 			'last-position': "0,0",
@@ -722,6 +714,47 @@ END;
 
 		for trigger in triggers:
 			root.append(trigger)
+
+		# Now append views
+		for view in views:
+			figure = diagram.getViewFigure(view)
+			layer = diagram.getFigureLayer(figure)
+
+			vnode = lxml.etree.Element('view', {
+				'name': view['name'],
+				'layer': '0',
+				'collapse-mode': "2",
+				'max-obj-count': "0",
+			})
+
+			snode = lxml.etree.Element('schema', {
+				'name': 'public',
+			})
+			vnode.append(snode)
+
+			rnode = lxml.etree.Element('role', {
+				'name': 'postgres',
+			})
+			vnode.append(rnode)
+
+			cnode = lxml.etree.Element('comment')
+			cnode.text = view.comment
+			vnode.append(cnode)
+
+			pnode = lxml.etree.Element('position', {
+				'x': str(int((figure['left'] + layer['left'] if layer else 0) * self.POS_SCALE_X)),
+				'y': str(int((figure['top'] + layer['top'] if layer else 0) * self.POS_SCALE_Y)),
+			})
+			vnode.append(pnode)
+
+			# <reference> <expression>...</expression></reference>
+			refnode = lxml.etree.Element('reference')
+			expnode = lxml.etree.Element('expression')
+			expnode.text = view.definition
+			refnode.append(expnode)
+			vnode.append(refnode)
+
+			root.append(vnode)
 
 		return tree
 
