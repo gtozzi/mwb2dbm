@@ -11,7 +11,6 @@ import collections
 
 
 MAX_NAME_LEN = 63
-VIEW_CLEAN_REGEX = r"(CREATE VIEW [\u0080-\uFFFF]+ AS)|(CREATE VIEW [`\"]+[0-9,a-z,A-Z$_]+[`\"]+ AS)"
 
 class Color:
 	''' And RGB color '''
@@ -271,6 +270,8 @@ class Table(BaseObjFromEl):
 			self.triggers.append(Trigger(trigger, self))
 
 class View(BaseObjFromEl):
+	CLEAN_REGEX = r'CREATE\s+VIEW\s+(?:[0-9a-zA-Z$_\u0080-\uFFFF]+|[`"][\u0001-\uFFFF]+[`"])\s+AS'
+
 	def __init__(self, el):
 		super().__init__(el)
 
@@ -279,7 +280,7 @@ class View(BaseObjFromEl):
 
 		# Remove "CREATE VIEW ... AS" from definition
 		dirtydef = el.find("./value[@key='sqlDefinition']").text
-		self.definition = re.sub(VIEW_CLEAN_REGEX, "", dirtydef, 0, re.MULTILINE)
+		self.definition = re.sub(self.CLEAN_REGEX, "", dirtydef, 0, re.MULTILINE)
 
 class Figure(BaseObjFromEl):
 
