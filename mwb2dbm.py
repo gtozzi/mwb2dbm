@@ -111,10 +111,11 @@ END;
 
 		return function
 
-	def createDbm(self, dbname, tables, diagram, prependTableNameInIdx=False, nocitext=False, nofkidx=False, triggerConfig=None):
+	def createDbm(self, dbname, tables, views, diagram, prependTableNameInIdx=False, nocitext=False, nofkidx=False, triggerConfig=None):
 		''' Creates a new DBM model from the given diagram
 		@param dbname The database name
 		@param tables List of Table objects
+		@param views List of View objects
 		@param diagram The diagram
 		@param prependTableNameInIdx bool When true, prepend table name in indexes
 		@param nocitext If True, do not add citext module
@@ -714,6 +715,47 @@ END;
 		for trigger in triggers:
 			root.append(trigger)
 
+		# Now append views
+		for view in views:
+			figure = diagram.getViewFigure(view)
+			layer = diagram.getFigureLayer(figure)
+
+			vnode = lxml.etree.Element('view', {
+				'name': view['name'],
+				'layer': '0',
+				'collapse-mode': "2",
+				'max-obj-count': "0",
+			})
+
+			snode = lxml.etree.Element('schema', {
+				'name': 'public',
+			})
+			vnode.append(snode)
+
+			rnode = lxml.etree.Element('role', {
+				'name': 'postgres',
+			})
+			vnode.append(rnode)
+
+			cnode = lxml.etree.Element('comment')
+			cnode.text = view.comment
+			vnode.append(cnode)
+
+			pnode = lxml.etree.Element('position', {
+				'x': str(int((figure['left'] + layer['left'] if layer else 0) * self.POS_SCALE_X)),
+				'y': str(int((figure['top'] + layer['top'] if layer else 0) * self.POS_SCALE_Y)),
+			})
+			vnode.append(pnode)
+
+			# <reference> <expression>...</expression></reference>
+			refnode = lxml.etree.Element('reference')
+			expnode = lxml.etree.Element('expression')
+			expnode.text = view.definition
+			refnode.append(expnode)
+			vnode.append(refnode)
+
+			root.append(vnode)
+
 		return tree
 
 	def loadDbm(self, path):
@@ -839,6 +881,13 @@ END;
 		for table in tables:
 			convTables.append(dbo.Table(table, types))
 
+		views = schema.find("./value[@key='views']")
+		assert len(views), list(schema)
+
+		convViews = []
+		for view in views:
+			convViews.append(dbo.View(view))
+
 		diagrams = model.find("./value[@key='diagrams']")
 		assert len(diagrams), list(schema)
 
@@ -850,7 +899,7 @@ END;
 		#TODO: multiple diagrams not supported, choose diagram
 		self.log.info('Using diagram "%s"', convDiagrams[0]['name'])
 
-		return self.createDbm(schemaName, convTables, convDiagrams[0],
+		return self.createDbm(schemaName, convTables, convViews, convDiagrams[0],
 				prependTableNameInIdx=True, nocitext=nocitext, nofkidx=nofkidx, triggerConfig=triggerConfig)
 
 	def mergeDbm(self, origTree, mergeTree):
