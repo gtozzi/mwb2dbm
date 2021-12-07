@@ -11,7 +11,7 @@ import collections
 
 
 MAX_NAME_LEN = 63
-VIEW_CLEAN_REGEX = r"CREATE VIEW `?[A-Za-z1-9_]+`? AS"
+VIEW_CLEAN_REGEX = r"(CREATE VIEW [\u0080-\uFFFF]+ AS)|(CREATE VIEW [`\"]+[0-9,a-z,A-Z$_]+[`\"]+ AS)"
 
 class Color:
 	''' And RGB color '''
