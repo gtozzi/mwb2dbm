@@ -12,7 +12,6 @@ import collections
 
 MAX_NAME_LEN = 63
 
-
 class Color:
 	''' And RGB color '''
 
@@ -270,9 +269,23 @@ class Table(BaseObjFromEl):
 		for trigger in triggers:
 			self.triggers.append(Trigger(trigger, self))
 
+class View(BaseObjFromEl):
+	CLEAN_REGEX = r'CREATE\s+VIEW\s+(?:[0-9a-zA-Z$_\u0080-\uFFFF]+|[`"][\u0001-\uFFFF]+[`"])\s+AS'
+
+	def __init__(self, el):
+		super().__init__(el)
+
+		self.name = el.find("./value[@key='name']").text
+		self.comment = el.find("./value[@key='comment']").text
+
+		# Remove "CREATE VIEW ... AS" from definition
+		dirtydef = el.find("./value[@key='sqlDefinition']").text
+		self.definition = re.sub(self.CLEAN_REGEX, "", dirtydef, 0, re.MULTILINE)
+
 class Figure(BaseObjFromEl):
 
 	TABLE_TYPE = 'workbench.physical.TableFigure'
+	VIEW_TYPE = 'workbench.physical.ViewFigure'
 
 	def __init__(self, el):
 		super().__init__(el)
@@ -308,6 +321,13 @@ class Diagram(BaseObjFromEl):
 	def getTableFigure(self, table):
 		for figure in self.figures:
 			if figure.type == Figure.TABLE_TYPE and figure['table'] == table.id:
+				return figure
+
+		raise KeyError()
+
+	def getViewFigure(self, view):
+		for figure in self.figures:
+			if figure.type == Figure.VIEW_TYPE and figure['view'] == view.id:
 				return figure
 
 		raise KeyError()
