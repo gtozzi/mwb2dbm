@@ -135,6 +135,8 @@ END;
 			'max-obj-count': "4",
 			'default-schema': "public",
 			'default-owner': "postgres",
+			'layers': "Default layer",
+	 		'active-layers': "0",
 		}))
 		root = tree.getroot()
 
@@ -147,7 +149,7 @@ END;
 
 		schema = lxml.etree.Element('schema', {
 			'name': "public",
-			'layer': "0",
+			'layers': "0",
 			'fill-color': "#e1e1e1",
 			'sql-disabled': "true",
 		})
@@ -173,7 +175,7 @@ END;
 			# Create text box
 			tnode = lxml.etree.Element('textbox', {
 				'name': layer['name'],
-				'layer': '0',
+				'layers': '0',
 				'font-size': "9",
 			})
 			root.append(tnode)
@@ -249,7 +251,7 @@ END;
 
 			tnode = lxml.etree.Element('table', {
 				'name': table['name'],
-				'layer': '0',
+				'layers': '0',
 				'collapse-mode': "2",
 				'max-obj-count': "0",
 			})
@@ -379,9 +381,10 @@ END;
 					utypenode.append(lxml.etree.Element('role', {
 						'name': 'postgres',
 					}))
-					utypenode.append(lxml.etree.Element('enumeration', {
-						'values': ','.join(values)
-					}))
+					for value in values:
+						utypenode.append(lxml.etree.Element('enumeration', {
+							'label': value
+						}))
 
 					type = 'public.' + type
 				else:
@@ -522,7 +525,7 @@ END;
 					constraintnode.append(expr)
 					colConstraints.append(constraintnode)
 
-					type = 'citext'
+					type = 'public.citext'
 					del attrs['length']
 
 				typenode = lxml.etree.Element('type', {
@@ -676,7 +679,7 @@ END;
 			relattrs = {
 				'name': fk['name'],
 				'type': "rel1n",
-				'layer': "0",
+				'layers': "0",
 				'src-col-pattern': scol['name'],
 				'pk-pattern': "{dt}_pk",
 				'uq-pattern': "{dt}_uq",
@@ -722,7 +725,7 @@ END;
 
 			vnode = lxml.etree.Element('view', {
 				'name': view['name'],
-				'layer': '0',
+				'layers': '0',
 				'collapse-mode': "2",
 				'max-obj-count': "0",
 			})
