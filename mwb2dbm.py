@@ -547,6 +547,9 @@ END;
 			# Append at the end since enums must go above
 			root.append(tnode)
 
+			# Remember every index name: possible duplicates handler
+			idxnames = []
+
 			# Append indices and primary key
 			for index in table.indices:
 				# If all columns are part of a relation and index is not unique,
@@ -580,9 +583,14 @@ END;
 					idxname = prefix + index['name']
 					if len(idxname) > dbo.MAX_NAME_LEN:
 						# Truncate too long name
-						# TODO: improve
 						assert idxname.endswith('_idx'), idxname
 						idxname = idxname[:dbo.MAX_NAME_LEN-4] + '_idx'
+						counter = 2
+						while idxname in idxnames:
+							postfix = f'_{counter}_idx'
+							idxname = idxname[:dbo.MAX_NAME_LEN-len(postfix)] + postfix
+							counter += 1
+						idxnames.append(idxname)
 					indexnode = lxml.etree.Element('index', {
 						'name': idxname,
 						'table': 'public.' + table['name'],
