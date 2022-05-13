@@ -293,6 +293,9 @@ class Schema(BaseObjFromEl):
 		for view in views:
 			self.views.append(View(view))
 
+	def isPublic(self):
+		return self.newName == 'public'
+
 class View(BaseObjFromEl):
 	CLEAN_REGEX = r'CREATE\s+VIEW\s+(?:[0-9a-zA-Z$_\u0080-\uFFFF]+|[`"][\u0001-\uFFFF]+[`"])\s+AS'
 

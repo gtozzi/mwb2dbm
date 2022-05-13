@@ -151,7 +151,8 @@ END;
 				'name': schema.newName,
 				'layers': "0",
 				'fill-color': "#e1e1e1",
-				'sql-disabled': "true",
+				'sql-disabled': "true" if schema.isPublic() else "false",
+				'rect-visible': "false" if schema.isPublic() else "true",
 			})
 			root.append(schemael)
 
