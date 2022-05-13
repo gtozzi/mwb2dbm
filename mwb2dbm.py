@@ -33,7 +33,7 @@ class Main:
 
 	# Positions (x,y) scale ratio
 	POS_SCALE_X = 1.8
-	POS_SCALE_Y = 1.2
+	POS_SCALE_Y = 1.5
 
 	def __init__(self):
 		self.log = logging.getLogger('main')
