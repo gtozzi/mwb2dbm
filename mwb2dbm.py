@@ -111,11 +111,10 @@ END;
 
 		return function
 
-	def createDbm(self, dbname, tables, views, diagram, prependTableNameInIdx=False, nocitext=False, nofkidx=False, triggerConfig=None):
+	def createDbm(self, dbname, schemas, diagram, prependTableNameInIdx=False, nocitext=False, nofkidx=False, triggerConfig=None):
 		''' Creates a new DBM model from the given diagram
 		@param dbname The database name
-		@param tables List of Table objects
-		@param views List of View objects
+		@param schemas Dict of Schema objects
 		@param diagram The diagram
 		@param prependTableNameInIdx bool When true, prepend table name in indexes
 		@param nocitext If True, do not add citext module
@@ -147,13 +146,14 @@ END;
 		})
 		root.append(database)
 
-		schema = lxml.etree.Element('schema', {
-			'name': "public",
-			'layers': "0",
-			'fill-color': "#e1e1e1",
-			'sql-disabled': "true",
-		})
-		root.append(schema)
+		for schema in schemas.values():
+			schemael = lxml.etree.Element('schema', {
+				'name': schema.newName,
+				'layers': "0",
+				'fill-color': "#e1e1e1",
+				'sql-disabled': "true",
+			})
+			root.append(schemael)
 
 		if not nocitext:
 			citext = lxml.etree.Element('extension', {
@@ -242,8 +242,12 @@ END;
 		# Save indexes for later
 		indexes = []
 
+		# Some useful comphrensions
+		schemaTableList = [ (schema, table) for schema in schemas.values() for table in schema.tables ]
+		schemaViewList = [ (schema, view) for schema in schemas.values() for view in schema.views ]
+
 		# Create tables
-		for table in tables:
+		for schema, table in schemaTableList:
 			colConstraints = []
 
 			figure = diagram.getTableFigure(table)
@@ -257,7 +261,7 @@ END;
 			})
 
 			snode = lxml.etree.Element('schema', {
-				'name': 'public',
+				'name': schema.newName,
 			})
 			tnode.append(snode)
 
@@ -376,7 +380,7 @@ END;
 					root.append(utypenode)
 
 					utypenode.append(lxml.etree.Element('schema', {
-						'name': 'public',
+						'name': schema.newName,
 					}))
 					utypenode.append(lxml.etree.Element('role', {
 						'name': 'postgres',
@@ -437,10 +441,10 @@ END;
 							'del-event': "false",
 							'upd-event': "true",
 							'trunc-event': "false",
-							'table': "public." + table['name'],
+							'table': schema.newName + "." + table['name'],
 						})
 						trigger.append(lxml.etree.Element('function', {
-							'signature': "public." + funcName + "()"
+							'signature': schema.newName + "." + funcName + "()"
 						}))
 						updateTsTriggers.append(trigger)
 					else:
@@ -499,7 +503,7 @@ END;
 								constraintnode = lxml.etree.Element('constraint', {
 									'name': table['name'] + '_' + col['name'] + '_ge0',
 									'type': 'ck-constr',
-									'table': 'public.' + table['name'],
+									'table': schema.newName + '.' + table['name'],
 								})
 								expr = lxml.etree.Element('expression')
 								expr.text = "{} >= 0".format(col['name'])
@@ -518,7 +522,7 @@ END;
 					constraintnode = lxml.etree.Element('constraint', {
 						'name': table['name'] + '_' + col['name'] + '_len',
 						'type': 'ck-constr',
-						'table': 'public.' + table['name'],
+						'table': schema.newName + '.' + table['name'],
 					})
 					expr = lxml.etree.Element('expression')
 					expr.text = 'length("{}") {} {}'.format(col['name'], op, attrs['length'])
@@ -565,7 +569,7 @@ END;
 					constraintnode = lxml.etree.Element('constraint', {
 						'name': table['name'] + '_pk',
 						'type': 'pk-constr',
-						'table': 'public.' + table['name'],
+						'table': schema.newName + '.' + table['name'],
 					})
 					constraintnode.append(lxml.etree.Element('columns', {
 						'names': ','.join([c.tableCol['name'] for c in index.columns if not c.tableCol.fk]),
@@ -593,7 +597,7 @@ END;
 						idxnames.append(idxname)
 					indexnode = lxml.etree.Element('index', {
 						'name': idxname,
-						'table': 'public.' + table['name'],
+						'table': schema.newName + '.' + table['name'],
 						'concurrent': 'false',
 						'unique': 'true' if index['unique'] else 'false',
 						'fast-update': 'false',
@@ -617,7 +621,7 @@ END;
 
 			# Append foreign keys to the fk process list
 			for fk in table.fks:
-				fks.append(fk)
+				fks.append((schema,fk))
 
 			# Append column order (customidx)
 			for type, obj in customidxs.items():
@@ -654,7 +658,7 @@ END;
 						'del-event': 'true' if trigEvDel else 'false',
 						'upd-event': 'true' if trigEvUpd else 'false',
 						'trunc-event': 'false',
-						'table': 'public.' + table['name']
+						'table': schema.newName + '.' + table['name']
 					})
 					trigFuncNode = lxml.etree.Element('function', {
 						'signature': triggerConfig.getFunctionForTrigger(trigger.name)
@@ -666,7 +670,7 @@ END;
 
 		# Append relation nodes now end, so all tables have been created now
 		# process PKs earlier
-		for fk in sorted(fks, key=lambda x: x.primary, reverse=True):
+		for schema, fk in sorted(fks, key=lambda x: x[1].primary, reverse=True):
 			if 'referencedTable' not in fk:
 				# Apparently some fks are just indexes, ignore them
 				continue
@@ -674,7 +678,7 @@ END;
 			if not fk['many']:
 				raise NotImplementedError(fk)
 
-			for rtable in tables:
+			for rschema, rtable in schemaTableList:
 				if rtable.id == fk['referencedTable']:
 					break
 			else:
@@ -692,8 +696,8 @@ END;
 				'pk-pattern': "{dt}_pk",
 				'uq-pattern': "{dt}_uq",
 				'src-fk-pattern': "{st}_fk",
-				'src-table': "public." + rtable['name'],
-				'dst-table': "public." + fk.table['name'],
+				'src-table': rschema.newName + "." + rtable['name'],
+				'dst-table': schema.newName + "." + fk.table['name'],
 				'src-required': "true" if fk['mandatory'] and scol['isNotNull'] else "false",
 				'dst-required': "false",
 				'identifier': "true" if fk.primary else "false",
@@ -727,7 +731,7 @@ END;
 			root.append(trigger)
 
 		# Now append views
-		for view in views:
+		for schema, view in schemaViewList:
 			figure = diagram.getViewFigure(view)
 			layer = diagram.getFigureLayer(figure)
 
@@ -739,7 +743,7 @@ END;
 			})
 
 			snode = lxml.etree.Element('schema', {
-				'name': 'public',
+				'name': schema.newName,
 			})
 			vnode.append(snode)
 
@@ -774,13 +778,15 @@ END;
 		parser = lxml.etree.XMLParser(remove_blank_text=True)
 		return lxml.etree.parse(path, parser)
 
-	def convert(self, mwbPath, merge=[], nocitext=False, nofkidx=False, triggerConfig=None):
+	def convert(self, mwbPath, merge=[], nocitext=False, nofkidx=False, triggerConfig=None, schemaRenames={}):
 		''' Perform the conversion
 
 		@param mwbPath string: The source file path
 		@param merge list of dbm files to merge
 		@param nocitext If True, will not convert (var)char to citext
 		@param nofkidx If True, will not create indexes for foreign keys
+		@param triggerConfig
+		@param schemaRenames dictionary of old name: new name for schemas
 		'''
 
 		if merge is None:
@@ -825,7 +831,7 @@ END;
 		assert models, list(document)
 		assert len(models) == 1, list(models)
 
-		dbmTree = self.convertModel(models[0], nocitext, triggerConfig=triggerConfig)
+		dbmTree = self.convertModel(models[0], nocitext, triggerConfig=triggerConfig, schemaRenames=schemaRenames)
 
 		# Merge listed DBMs
 		for mergePath in merge:
@@ -841,7 +847,7 @@ END;
 		with open(dbmPath, 'wb') as out:
 			out.write(lxml.etree.tostring(dbmTree, pretty_print=True, xml_declaration=True, encoding='UTF-8'))
 
-	def convertModel(self, model, nocitext=False, nofkidx=False, triggerConfig=None):
+	def convertModel(self, model, nocitext=False, nofkidx=False, triggerConfig=None, schemaRenames={}):
 		#value {'type': 'object', 'struct-name': 'db.mysql.Catalog', 'id': '4cd06db0-5bd6-11e1-bc3b-e0cb4ec5d89b', 'struct-checksum': '0x82ad3466', 'key': 'catalog'}
 		#value {'type': 'string', 'key': 'connectionNotation'}
 		#value {'_ptr_': '0x558a018542b0', 'type': 'list', 'content-type': 'object', 'content-struct-name': 'db.mgmt.Connection', 'key': 'connections'}
@@ -863,12 +869,6 @@ END;
 		catalog = model.find("./value[@key='catalog']")
 		assert catalog is not None, list(model)
 
-		schema = catalog.find("./value[@key='schemata']/value[@struct-name='db.mysql.Schema']")
-		assert schema is not None, list(catalog)
-
-		schemaNameTag = schema.find("./value[@key='name']")
-		schemaName = schemaNameTag.text
-
 		simpleTypesTag = catalog.find("./value[@key='simpleDatatypes']")
 		assert simpleTypesTag is not None, list(catalog)
 
@@ -885,22 +885,34 @@ END;
 			assert t.id not in types
 			types[t.id] = t
 
-		tables = schema.find("./value[@key='tables']")
-		assert len(tables), list(schema)
+		schemaEls = catalog.findall("./value[@key='schemata']/value[@struct-name='db.mysql.Schema']")
+		assert schemaEls, list(catalog)
+		schemas = collections.OrderedDict()
+		schemaNames = set()
+		dbname = None
+		for el in schemaEls:
+			schema = dbo.Schema(el, types)
+			assert schema.name not in schemas, schema.name
+			schemas[schema.name] = schema
 
-		convTables = []
-		for table in tables:
-			convTables.append(dbo.Table(table, types))
+			# Choose new schema name
+			if schema.name in schemaRenames:
+				newName = schemaRenames[schema.name]
+			elif 'public' not in schemaNames:
+				# Map first unmapped schema as public and use its name as dbname
+				newName = 'public'
+				dbname = schema.name
+			else:
+				newName = schema.name
+			assert newName not in schemaNames, newName
+			schema.newName = newName
+			schemaNames.add(newName)
 
-		views = schema.find("./value[@key='views']")
-		assert len(views), list(schema)
-
-		convViews = []
-		for view in views:
-			convViews.append(dbo.View(view))
+			self.log.info('Found schema "%s", migrating as "%s"', schema.name, schema.newName)
+		assert dbname
 
 		diagrams = model.find("./value[@key='diagrams']")
-		assert len(diagrams), list(schema)
+		assert len(diagrams), list(schemas)
 
 		convDiagrams = []
 		for diagram in diagrams:
@@ -910,7 +922,7 @@ END;
 		#TODO: multiple diagrams not supported, choose diagram
 		self.log.info('Using diagram "%s"', convDiagrams[0]['name'])
 
-		return self.createDbm(schemaName, convTables, convViews, convDiagrams[0],
+		return self.createDbm(dbname, schemas, convDiagrams[0],
 				prependTableNameInIdx=True, nocitext=nocitext, nofkidx=nofkidx, triggerConfig=triggerConfig)
 
 	def mergeDbm(self, origTree, mergeTree):
@@ -955,8 +967,17 @@ if __name__ == '__main__':
 	parser.add_argument('--merge', action='append', help='merge content from this dbm into the final result, this is useful for hand-converting stored functions')
 	parser.add_argument('--nocitext', action='store_true', help='do not convert char to citext')
 	parser.add_argument('--nofkidx', action='store_true', help='do not create indexes for foreign keys')
+	parser.add_argument('--schemarename', action='append', help='use this option to rename a schema (old_name=new_name)')
 
 	args = parser.parse_args()
+
+	renames = {}
+	if args.schemarename:
+		for ren in args.schemarename:
+			old, new = ren.split('=')
+			assert old
+			assert new
+			renames[old] = new
 
 	logging.basicConfig(level=logging.DEBUG)
 
@@ -970,4 +991,4 @@ if __name__ == '__main__':
 			parser.print_help()
 			sys.exit(1)
 
-	Main().convert(args.mwb, args.merge, args.nocitext, args.nofkidx, triggerConfig)
+	Main().convert(args.mwb, args.merge, args.nocitext, args.nofkidx, triggerConfig, renames)

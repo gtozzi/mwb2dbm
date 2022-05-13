@@ -7,6 +7,7 @@ Database Objects
 '''
 
 import re
+import logging
 import collections
 
 
@@ -268,6 +269,29 @@ class Table(BaseObjFromEl):
 		self.triggers = []
 		for trigger in triggers:
 			self.triggers.append(Trigger(trigger, self))
+
+class Schema(BaseObjFromEl):
+	def __init__(self, el, types):
+		super().__init__(el)
+
+		self.nameTag = el.find("./value[@key='name']")
+		self.name = self.nameTag.text
+		self.newName = self.name
+
+		tables = el.find("./value[@key='tables']")
+		assert len(tables), list(el)
+
+		self.tables = []
+		for table in tables:
+			self.tables.append(Table(table, types))
+
+		views = el.find("./value[@key='views']")
+		if not len(views):
+			logging.warning('No views in schema %s', self.name)
+
+		self.views = []
+		for view in views:
+			self.views.append(View(view))
 
 class View(BaseObjFromEl):
 	CLEAN_REGEX = r'CREATE\s+VIEW\s+(?:[0-9a-zA-Z$_\u0080-\uFFFF]+|[`"][\u0001-\uFFFF]+[`"])\s+AS'
