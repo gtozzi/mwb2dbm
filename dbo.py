@@ -350,14 +350,14 @@ class Diagram(BaseObjFromEl):
 			if figure.type == Figure.TABLE_TYPE and figure['table'] == table.id:
 				return figure
 
-		raise KeyError()
+		raise KeyError('Table not found in diagram')
 
 	def getViewFigure(self, view):
 		for figure in self.figures:
 			if figure.type == Figure.VIEW_TYPE and figure['view'] == view.id:
 				return figure
 
-		raise KeyError()
+		raise KeyError('View not found in diagram')
 
 	def getFigureLayer(self, figure):
 		''' Returns the figure layer, or None if no layer is found '''
@@ -375,4 +375,4 @@ class Diagram(BaseObjFromEl):
 			if self.getFigureLayer(figure) == layer:
 				return figure
 
-		raise KeyError()
+		raise KeyError('Layer not found in diagram')

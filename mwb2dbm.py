@@ -146,6 +146,17 @@ END;
 		})
 		root.append(database)
 
+		# If public schema has not been passed from conversion, add it anyway
+		if 'public' not in schemas:
+			schemael = lxml.etree.Element('schema', {
+				'name': 'public',
+				'layers': "0",
+				'fill-color': "#b1b1b1",
+				'sql-disabled': "true",
+				'rect-visible': "false",
+			})
+			root.append(schemael)
+
 		for schema in schemas.values():
 			schemael = lxml.etree.Element('schema', {
 				'name': schema.newName,
@@ -469,6 +480,7 @@ END;
 						dname = type + str(precision)
 						if 'UNSIGNED' in flags:
 							dname = 'u' + dname
+							flags.remove('UNSIGNED')
 						if dname not in domains:
 							if 'UNSIGNED' in flags:
 								minVal = 0
@@ -479,7 +491,6 @@ END;
 									'VALUE >= {} AND VALUE <= {}'.format(minVal, maxVal))
 							domains.add(dname)
 						type = 'public.' + dname
-						flags.remove('UNSIGNED')
 					else:
 						assert attrs['length'] == '0'
 						attrs['length'] = str(precision)
@@ -667,7 +678,8 @@ END;
 					trigNode.append(trigFuncNode)
 					triggers.append(trigNode)
 			else:
-				self.log.warning('Skipping triggers generation as no valid trigger config file is provided')
+				for trigger in table.triggers:
+					self.log.warning('Skipping trigger %s generation as no valid trigger config file is provided', trigger.name)
 
 		# Append relation nodes now end, so all tables have been created now
 		# process PKs earlier
@@ -891,18 +903,21 @@ END;
 		schemas = collections.OrderedDict()
 		schemaNames = set()
 		dbname = None
-		for el in schemaEls:
+		for idx, el in enumerate(schemaEls):
 			schema = dbo.Schema(el, types)
 			assert schema.name not in schemas, schema.name
 			schemas[schema.name] = schema
+
+			# Use first schema name as db name
+			if idx == 0:
+				dbname = schema.name
 
 			# Choose new schema name
 			if schema.name in schemaRenames:
 				newName = schemaRenames[schema.name]
 			elif 'public' not in schemaNames:
-				# Map first unmapped schema as public and use its name as dbname
+				# Map first unmapped schema as public
 				newName = 'public'
-				dbname = schema.name
 			else:
 				newName = schema.name
 			assert newName not in schemaNames, newName
@@ -910,6 +925,7 @@ END;
 			schemaNames.add(newName)
 
 			self.log.info('Found schema "%s", migrating as "%s"', schema.name, schema.newName)
+
 		assert dbname
 
 		diagrams = model.find("./value[@key='diagrams']")
